@@ -1,6 +1,5 @@
 # SkinSight AI - AI Skin Health Analyzer
 
----
 
 **Upload a selfie → Get a full dermatological-grade visual skin report in under 5 seconds.**
 

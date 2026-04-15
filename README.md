@@ -64,7 +64,7 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ### End-to-End Inference Pipeline
 

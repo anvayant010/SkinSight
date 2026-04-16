@@ -1,6 +1,5 @@
 # SkinSight AI - AI Skin Health Analyzer
 
-
 **Upload a selfie → Get a full dermatological-grade visual skin report in under 5 seconds.**
 
 SkinSight AI is an intelligent web application that analyzes facial skin conditions using computer vision and AI, delivering instant, visual, and actionable insights - making professional-level skin analysis accessible to everyone.
@@ -23,11 +22,13 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 **SkinSight AI** bridges the gap between self-diagnosis and professional care.
 
 **How it works:**
+
 1. User uploads a clear facial photo
 2. AI processes the image in real-time
 3. Delivers a **structured, visual-first dermatological report**
 
 ### Core Outputs
+
 - **Acne Severity Grading** (Clear → Mild → Moderate → Severe)
 - **Lesion Detection** with color-coded bounding boxes
 - **Facial Zone Segmentation** (Forehead, Cheeks, Nose, Chin/Jawline)
@@ -48,15 +49,15 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 
 ## **Tech Stack**
 
-| Layer              | Technology                                      |
-|--------------------|-------------------------------------------------|
-| **Frontend**       | React.js + TailwindCSS                          |
-| **Backend**        | FastAPI (Python)                                |
-| **CV Models**      | YOLOv8 (lesion detection), MediaPipe (face mesh)|
-| **Segmentation**   | SAM (Segment Anything) / DeepLabv3              |
-| **Hyperpigmentation** | OpenCV HSV + Custom Skin Tone Calibration    |
-| **LLM Layer**      | Claude (Anthropic) API                          |
-| **Deployment**     | Docker + Render / Hugging Face Spaces           |
+| Layer                 | Technology                                       |
+| --------------------- | ------------------------------------------------ |
+| **Frontend**          | React.js + TailwindCSS                           |
+| **Backend**           | FastAPI (Python)                                 |
+| **CV Models**         | YOLOv8 (lesion detection), MediaPipe (face mesh) |
+| **Segmentation**      | SAM (Segment Anything) / DeepLabv3               |
+| **Hyperpigmentation** | OpenCV HSV + Custom Skin Tone Calibration        |
+| **LLM Layer**         | Claude (Anthropic) API                           |
+| **Deployment**        | Docker + Render / Hugging Face Spaces            |
 
 **Pipeline Flow:**
 
@@ -70,22 +71,22 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 
 ```mermaid
 flowchart TD
-    A[User Photo Upload] 
+    A[User Photo Upload]
     --> B[Image Preprocessing<br/>Resize • Normalize • Lighting Correction]
-    
+
     B --> C[MediaPipe Face Mesh<br/>468 Landmark Detection]
-    
+
     C --> D[Facial Zone Segmentation<br/>Forehead • Cheeks • Nose • Chin+Jawline]
-    
+
     D --> E[YOLOv8 Lesion Detection<br/>Bounding Boxes + Classification]
     D --> F[Hyperpigmentation Analysis<br/>OpenCV HSV + Skin Tone Calibration]
-    
+
     E & F --> G[Severity Scoring Engine<br/>Rule-based + ML Classifier]
-    
+
     G --> H[Visual Overlay Composer<br/>Annotated Image Generation]
-    
+
     H --> I[Claude LLM Layer<br/>Report + Recommendations]
-    
+
     I --> J[Final Structured Report<br/>+ Annotated Photo]
 
     classDef input fill:#2563EB,stroke:#1E3A8A,color:#fff,rx:20,ry:20
@@ -97,3 +98,4 @@ flowchart TD
     class B,C process
     class D,E,F,G,H core
     class I,J output
+```

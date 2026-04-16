@@ -621,7 +621,8 @@ def _draw_overlay(
         region = output[y1:y2, x1:x2]
         if region.shape[:2] == hyperpig_mask.shape[:2]:
             tint = np.zeros_like(region)
-            tint[:, :, 0] = 255  # blue channel highlight
+            tint[:, :, 0] = 180  # blue channel  → purple in BGR
+            tint[:, :, 2] = 130  # red channel   → purple in BGR
             alpha = (hyperpig_mask.astype(np.float32) / 255.0)[:, :, None] * 0.35
             output[y1:y2, x1:x2] = (region * (1 - alpha) + tint * alpha).astype(
                 np.uint8

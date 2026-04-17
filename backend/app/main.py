@@ -2,7 +2,13 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.pipeline import analyze_image, compare_progress
-from app.schemas import AnalysisResult, ProgressReport
+from app.reporting import generate_detailed_report
+from app.schemas import (
+    AnalysisResult,
+    DetailedReportRequest,
+    DetailedReportResponse,
+    ProgressReport,
+)
 
 app = FastAPI(title="SkinSight AI MVP", version="0.2.0")
 
@@ -67,4 +73,15 @@ async def track(
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"Progress tracking failed: {exc}"
+        ) from exc
+
+
+@app.post("/report", response_model=DetailedReportResponse)
+async def detailed_report(payload: DetailedReportRequest) -> DetailedReportResponse:
+    try:
+        return generate_detailed_report(payload.analysis)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Detailed report generation failed: {exc}",
         ) from exc

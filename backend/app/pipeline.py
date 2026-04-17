@@ -1,6 +1,7 @@
 import base64
 import importlib
 import logging
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -11,6 +12,7 @@ from app.schemas import (
     AnalysisResult,
     BoundingBox,
     HyperpigmentationReport,
+    ProgressStage,
     ProgressReport,
 )
 
@@ -71,20 +73,38 @@ _FITZPATRICK_UPPER: dict[int, tuple[int, int, int]] = {
 
 
 def _load_yolo_models() -> None:
-    """Load only the classification model.
+    """Load YOLO classification and segmentation models once.
 
-    NOTE: yolov8m.pt is COCO-trained (80 generic classes) and produces false
-    positives on close-up face images.  Lesion detection is handled entirely
-    by the LAB+contour heuristic which is purpose-built for skin analysis.
-    The CLS model is kept for acne severity grading only.
+    Detection uses YOLO11 segmentation (yolo11s-seg) when available, with a
+    LAB+contour fallback to preserve behavior if model loading/inference fails.
     """
     global _YOLO_CLS_MODEL, _YOLO_DET_MODEL, _YOLO_LOAD_ATTEMPTED
     if _YOLO_LOAD_ATTEMPTED:
         return
     _YOLO_LOAD_ATTEMPTED = True
-    _YOLO_DET_MODEL = None  # intentionally disabled — COCO model not suitable
+    _YOLO_DET_MODEL = None
     try:
         from ultralytics import YOLO  # type: ignore[import]
+
+        seg_candidates = [
+            "yolo11s-seg.pt",  # Ultralytics canonical filename
+            "yolov11s-seg.pt",  # local variant users often keep manually
+        ]
+        seg_loaded = False
+        for candidate in seg_candidates:
+            try:
+                if Path(candidate).exists() or candidate == "yolo11s-seg.pt":
+                    _YOLO_DET_MODEL = YOLO(candidate)
+                    logger.info("Segmentation model loaded: %s", candidate)
+                    seg_loaded = True
+                    break
+            except Exception as exc:
+                logger.warning("Failed to load segmentation model %s: %s", candidate, exc)
+
+        if not seg_loaded:
+            logger.warning(
+                "YOLO11 segmentation unavailable - lesion detection will use LAB fallback"
+            )
 
         try:
             _YOLO_CLS_MODEL = YOLO("yolov8s-cls.pt")
@@ -310,6 +330,7 @@ def _detect_lesions_yolo(
     zone_hulls: Optional[dict[str, np.ndarray]],
     bbox_zones: Optional[dict[str, tuple[int, int, int, int]]],
 ) -> tuple[list[BoundingBox], dict[str, int]]:
+    """Run YOLO segmentation on the face crop and convert masks to lesion boxes."""
     _load_yolo_models()
     if _YOLO_DET_MODEL is None:
         return [], {}
@@ -321,19 +342,38 @@ def _detect_lesions_yolo(
 
     try:
         pil_face = Image.fromarray(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
-        results = _YOLO_DET_MODEL.predict(pil_face, conf=0.5, verbose=False)
+        results = _YOLO_DET_MODEL.predict(
+            pil_face,
+            conf=0.2,
+            imgsz=640,
+            verbose=False,
+        )
         boxes = results[0].boxes
         if boxes is None or len(boxes) == 0:
             return [], {}
 
+        masks = results[0].masks
+        face_area = max(1, face_bgr.shape[0] * face_bgr.shape[1])
+
         lesions: list[BoundingBox] = []
         zone_counts: dict[str, int] = {z: 0 for z in ZONE_ORDER}
 
-        for box in boxes:
+        for idx, box in enumerate(boxes):
             bx1, by1, bx2, by2 = (int(v) for v in box.xyxy[0].tolist())
             rw, rh = bx2 - bx1, by2 - by1
             if rw < 3 or rh < 3:
                 continue
+
+            if masks is not None and idx < len(masks.data):
+                seg_mask = masks.data[idx].cpu().numpy() > 0.5
+                seg_area = int(np.count_nonzero(seg_mask))
+            else:
+                seg_area = rw * rh
+
+            # Keep compact lesions; reject tiny noise and very large non-lesion regions.
+            if seg_area < 18 or seg_area > int(face_area * 0.03):
+                continue
+
             cx = x1 + bx1 + rw // 2
             cy = y1 + by1 + rh // 2
             conf = float(box.conf[0])
@@ -414,13 +454,12 @@ def _detect_lesions(
     zone_hulls: Optional[dict[str, np.ndarray]],
     bbox_zones: Optional[dict[str, tuple[int, int, int, int]]],
 ) -> tuple[list[BoundingBox], dict[str, int]]:
-    """LAB+contour is the primary lesion detector.
-
-    YOLO detection with yolov8m.pt (COCO) was disabled because the model
-    returns false-positive generic-object detections on face crops, which
-    masked the much more accurate LAB+contour results.  A fine-tuned acne
-    detection model (e.g. from Roboflow) can be slotted back in here.
-    """
+    """Use YOLO11 segmentation first, then fall back to LAB contours."""
+    yolo_lesions, yolo_zone_counts = _detect_lesions_yolo(
+        image_bgr, face_bbox, zone_hulls, bbox_zones
+    )
+    if yolo_lesions:
+        return yolo_lesions, yolo_zone_counts
     return _detect_lesions_lab(image_bgr, face_bbox, zone_hulls, bbox_zones)
 
 
@@ -601,7 +640,7 @@ def _draw_overlay(
 
     # Lesion bounding boxes — confidence-based colour coding
     # high (≥0.75): red (inflammatory)  mid (≥0.55): amber  low: green (comedonal)
-    for lesion in lesions:
+    for idx, lesion in enumerate(lesions, start=1):
         if lesion.confidence >= 0.75:
             box_color = (0, 0, 220)  # red
         elif lesion.confidence >= 0.55:
@@ -614,6 +653,16 @@ def _draw_overlay(
             (lesion.x + lesion.width, lesion.y + lesion.height),
             box_color,
             2,
+        )
+        cv2.putText(
+            output,
+            f"L{idx}",
+            (lesion.x, max(18, lesion.y - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            box_color,
+            1,
+            cv2.LINE_AA,
         )
 
     # Hyperpigmentation tint overlay
@@ -629,6 +678,46 @@ def _draw_overlay(
             )
 
     # Face bounding box
+    cv2.rectangle(output, (x1, y1), (x2, y2), (255, 255, 255), 2)
+    return output
+
+
+def _build_lesion_heatmap(
+    image_bgr: np.ndarray,
+    face_bbox: tuple[int, int, int, int],
+    lesions: list[BoundingBox],
+) -> np.ndarray:
+    """Create a lesion-density heatmap overlay for visual hotspot inspection."""
+    output = image_bgr.copy()
+    x1, y1, x2, y2 = face_bbox
+    face_h = max(1, y2 - y1)
+    face_w = max(1, x2 - x1)
+
+    density = np.zeros((face_h, face_w), dtype=np.float32)
+    if not lesions:
+        return output
+
+    radius = max(8, int(min(face_h, face_w) * 0.035))
+    for lesion in lesions:
+        cx = int(np.clip(lesion.x + lesion.width // 2 - x1, 0, face_w - 1))
+        cy = int(np.clip(lesion.y + lesion.height // 2 - y1, 0, face_h - 1))
+        strength = 0.6 + float(lesion.confidence) * 0.4
+        cv2.circle(density, (cx, cy), radius, strength, -1)
+
+    density = cv2.GaussianBlur(density, (0, 0), sigmaX=13, sigmaY=13)
+    max_val = float(np.max(density))
+    if max_val <= 1e-6:
+        return output
+
+    norm = np.uint8(np.clip((density / max_val) * 255.0, 0, 255))
+    color_map = cv2.applyColorMap(norm, cv2.COLORMAP_JET)
+    alpha = (norm.astype(np.float32) / 255.0)[:, :, None] * 0.55
+
+    region = output[y1:y2, x1:x2]
+    blended = (region.astype(np.float32) * (1.0 - alpha)) + (
+        color_map.astype(np.float32) * alpha
+    )
+    output[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
     cv2.rectangle(output, (x1, y1), (x2, y2), (255, 255, 255), 2)
     return output
 
@@ -690,7 +779,9 @@ def analyze_image(image_bytes: bytes) -> AnalysisResult:
     annotated = _draw_overlay(
         image_bgr, face_bbox, zone_hulls, bbox_zones, lesions, hyperpig_mask
     )
+    heatmap = _build_lesion_heatmap(image_bgr, face_bbox, lesions)
     encoded = _encode_image_base64(annotated)
+    heatmap_encoded = _encode_image_base64(heatmap)
     summary = _summary_text(acne_severity, lesions, hyperpigmentation, zone_counts)
 
     return AnalysisResult(
@@ -701,6 +792,7 @@ def analyze_image(image_bytes: bytes) -> AnalysisResult:
         hyperpigmentation=hyperpigmentation,
         summary=summary,
         annotated_image_base64=encoded,
+        heatmap_image_base64=heatmap_encoded,
     )
 
 
@@ -845,11 +937,47 @@ def compare_progress(baseline_bytes: bytes, followup_bytes: bytes) -> ProgressRe
         "Consult a dermatologist to validate these findings and adjust your treatment plan."
     )
 
+    now_stage = ProgressStage(
+        key="now",
+        title="Now",
+        bullets=[
+            f"Current follow-up lesion count: {followup_count}.",
+            f"Observed change from baseline: {delta_sign}{lesion_delta} lesions.",
+            f"Immediate trend status: {trend}.",
+        ],
+    )
+
+    short_term_bullet = (
+        "Maintain current routine for 2-4 weeks and monitor irritation signs weekly."
+        if improvement >= 0
+        else "Simplify routine for 1-2 weeks, prioritize barrier repair, then reintroduce actives slowly."
+    )
+    short_term_stage = ProgressStage(
+        key="short_term",
+        title="Short Term (2-4 weeks)",
+        bullets=[
+            short_term_bullet,
+            "Track weekly photos in consistent lighting and angle.",
+            "Adjust active ingredient frequency based on tolerance.",
+        ],
+    )
+
+    long_term_stage = ProgressStage(
+        key="long_term",
+        title="Long Term (8-12 weeks)",
+        bullets=[
+            "Target sustained reduction in new lesion formation and post-inflammatory marks.",
+            "Reassess progress using lesion count trend and image similarity together.",
+            "Consult dermatology if worsening persists or scarring risk increases.",
+        ],
+    )
+
     return ProgressReport(
         similarity=round(similarity, 4),
         baseline_lesions=baseline_count,
         followup_lesions=followup_count,
         improvement_percent=round(improvement, 2),
         timeline=timeline,
+        stages=[now_stage, short_term_stage, long_term_stage],
         summary=summary,
     )

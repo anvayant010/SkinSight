@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { jsPDF } from "jspdf";
 import "./styles.css";
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000";
 
 const ZONE_LABELS = {
   forehead: "Forehead",
@@ -12,14 +13,14 @@ const ZONE_LABELS = {
 };
 
 const SEVERITY_CONFIG = {
-  Clear: { color: "#10b981", bg: "rgba(16,185,129,0.15)", label: "Clear" },
-  Mild: { color: "#f59e0b", bg: "rgba(245,158,11,0.15)", label: "Mild" },
+  Clear: { color: "#d4d4d4", bg: "rgba(212,212,212,0.16)", label: "Clear" },
+  Mild: { color: "#a3a3a3", bg: "rgba(163,163,163,0.18)", label: "Mild" },
   Moderate: {
-    color: "#f97316",
-    bg: "rgba(249,115,22,0.15)",
+    color: "#737373",
+    bg: "rgba(115,115,115,0.2)",
     label: "Moderate",
   },
-  Severe: { color: "#ef4444", bg: "rgba(239,68,68,0.15)", label: "Severe" },
+  Severe: { color: "#525252", bg: "rgba(82,82,82,0.24)", label: "Severe" },
 };
 
 function getSeverityConfig(s) {
@@ -208,20 +209,285 @@ function StatCard({ icon, label, value, sub, accent }) {
   );
 }
 
+const REPORT_QUOTES = [
+  "Healthy skin is a reflection of overall wellness.",
+  "Consistency beats intensity in skincare routines.",
+  "Gentle care today prevents irritation tomorrow.",
+  "Progress photos tell the story better than memory.",
+];
+
+function AuthGate({ onSuccess }) {
+  const [mode, setMode] = useState("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+
+  const onSubmit = (e) => {
+    e.preventDefault();
+    setError("");
+    if (!email || !password || (mode === "register" && !name)) {
+      setError("Please fill all required fields.");
+      return;
+    }
+    if (mode === "register" && password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    onSuccess({ name, email, mode });
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-wave auth-wave-a" />
+      <div className="auth-wave auth-wave-b" />
+      <div className="auth-panel">
+        <p className="auth-kicker">SkinSight Access</p>
+        <h1 className="auth-title">{mode === "login" ? "Welcome Back" : "Create Account"}</h1>
+        <p className="auth-sub">
+          {mode === "login"
+            ? "Sign in to continue to your skin analysis dashboard."
+            : "Register to save your tracking timeline and reports."}
+        </p>
+
+        <form onSubmit={onSubmit} className="auth-form">
+          {mode === "register" && (
+            <label className="auth-field">
+              <span>Full Name</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+              />
+            </label>
+          )}
+          <label className="auth-field">
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+            />
+          </label>
+          <label className="auth-field">
+            <span>Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
+          </label>
+          {mode === "register" && (
+            <label className="auth-field">
+              <span>Confirm Password</span>
+              <input
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                placeholder="••••••••"
+              />
+            </label>
+          )}
+
+          {error && <div className="auth-error">{error}</div>}
+
+          <button type="submit" className="landing-btn auth-submit">
+            {mode === "login" ? "Login" : "Register"}
+          </button>
+        </form>
+
+        <button
+          className="auth-switch"
+          onClick={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setError("");
+          }}
+        >
+          {mode === "login"
+            ? "New here? Create an account"
+            : "Already have an account? Login"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════
    ANALYZE TAB
 ══════════════════════════════════════════════ */
-function AnalyzeTab() {
+function AnalyzeTab({ forcedView = "annotated" }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
+  const [detailedReport, setDetailedReport] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [reportQuoteIndex, setReportQuoteIndex] = useState(0);
+  const [imageSubView, setImageSubView] = useState("annotated");
   const [showResults, setShowResults] = useState(false);
+  const [heatmapOpen, setHeatmapOpen] = useState(false);
+  const [heatmapZoom, setHeatmapZoom] = useState(1);
 
   const previewUrl = useMemo(
     () => (file ? URL.createObjectURL(file) : null),
     [file],
   );
+
+  const normalizedReportText = useMemo(() => {
+    const raw = detailedReport?.report ?? "";
+    return raw
+      .replace(/^\s*\*\*([^*]+)\*\*\s*$/gm, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/^\s*\*\s+/gm, "- ")
+      .replace(/\r\n/g, "\n")
+      .trim();
+  }, [detailedReport]);
+
+  const summaryText = useMemo(() => {
+    const raw = String(result?.summary || "").trim().replace(/^['"]+|['"]+$/g, "");
+    if (!raw) return "Analysis complete.";
+    const sentence = raw.split(/(?<=[.!?])\s+/)[0] || raw;
+    return sentence.length > 180 ? `${sentence.slice(0, 177)}...` : sentence;
+  }, [result]);
+
+  const lesionCount = result?.lesions?.length ?? 0;
+  const topZone = useMemo(() => {
+    const entries = Object.entries(result?.zone_counts ?? {});
+    if (!entries.length) return "N/A";
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
+  }, [result]);
+
+  const closeHeatmapModal = () => {
+    setHeatmapOpen(false);
+    setHeatmapZoom(1);
+  };
+
+  const adjustHeatmapZoom = (delta) => {
+    setHeatmapZoom((z) => Math.min(3, Math.max(0.7, +(z + delta).toFixed(2))));
+  };
+
+  const resetHeatmapZoom = () => setHeatmapZoom(1);
+
+  const exportReportPdf = () => {
+    if (!detailedReport?.report) return;
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 42;
+    const usableWidth = pageWidth - margin * 2;
+    let y = margin;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("SkinSight AI Report", margin, y);
+    y += 22;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Model: ${detailedReport.model}`, margin, y);
+    doc.text(`Source: ${detailedReport.generated_by}`, pageWidth - margin, y, {
+      align: "right",
+    });
+    y += 18;
+
+    doc.setDrawColor(190);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 16;
+
+    doc.setFontSize(11);
+    const lines = doc.splitTextToSize(normalizedReportText, usableWidth);
+    for (const line of lines) {
+      if (y > pageHeight - margin) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.text(line, margin, y);
+      y += 16;
+    }
+
+    const safeStamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+    doc.save(`skinsight-report-${safeStamp}.pdf`);
+    setActionMessage("Report exported as PDF.");
+  };
+
+  const copyReportText = async () => {
+    if (!normalizedReportText) return;
+    await navigator.clipboard.writeText(normalizedReportText);
+    setActionMessage("Report copied to clipboard.");
+  };
+
+  const copySummaryText = async () => {
+    if (!result) return;
+    const lines = [
+      `Severity: ${result.acne_severity}`,
+      `Lesions: ${lesionCount}`,
+      `Top zone: ${topZone}`,
+      `Hyperpigmentation: ${Number(result.hyperpigmentation?.coverage_percent ?? 0).toFixed(1)}% (${result.hyperpigmentation?.severity ?? "N/A"})`,
+      `Summary: ${summaryText}`,
+    ];
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setActionMessage("Summary copied to clipboard.");
+  };
+
+  const downloadAnalysisJson = () => {
+    if (!result) return;
+    const payload = {
+      analysis: result,
+      report: detailedReport ?? null,
+      exported_at: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "skinsight-analysis.json";
+    a.click();
+    URL.revokeObjectURL(url);
+    setActionMessage("Analysis JSON downloaded.");
+  };
+
+  const downloadHeatmapImage = () => {
+    if (!result?.heatmap_image_base64) return;
+    const a = document.createElement("a");
+    a.href = `data:image/jpeg;base64,${result.heatmap_image_base64}`;
+    a.download = `skinsight-heatmap-${Date.now()}.jpg`;
+    a.click();
+    setActionMessage("Heatmap image downloaded.");
+  };
+
+  useEffect(() => {
+    setImageSubView(forcedView);
+  }, [forcedView]);
+
+  useEffect(() => {
+    if (!reportLoading) return undefined;
+    const quoteTimer = setInterval(() => {
+      setReportQuoteIndex((i) => (i + 1) % REPORT_QUOTES.length);
+    }, 2400);
+    return () => clearInterval(quoteTimer);
+  }, [reportLoading]);
+
+  useEffect(() => {
+    if (!heatmapOpen) return undefined;
+    const onKeyDown = (evt) => {
+      if (evt.key === "Escape") closeHeatmapModal();
+    };
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = oldOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [heatmapOpen]);
 
   const onAnalyze = async (e) => {
     e.preventDefault();
@@ -232,6 +498,10 @@ function AnalyzeTab() {
     setLoading(true);
     setError("");
     setResult(null);
+    setDetailedReport(null);
+    setReportError("");
+    setImageSubView(forcedView || "annotated");
+    setReportQuoteIndex(0);
     setShowResults(false);
     try {
       const fd = new FormData();
@@ -246,9 +516,35 @@ function AnalyzeTab() {
       }
       const data = await res.json();
       setResult(data);
+
+      setReportLoading(true);
+      try {
+        const reportRes = await fetch(`${API_BASE}/report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ analysis: data }),
+        });
+        if (!reportRes.ok) {
+          const p = await reportRes.json().catch(() => ({}));
+          throw new Error(p.detail || `Server error ${reportRes.status}`);
+        }
+        setDetailedReport(await reportRes.json());
+      } catch (reportErr) {
+        setReportError(reportErr.message || "Detailed report generation failed.");
+      } finally {
+        setReportLoading(false);
+      }
+
       setTimeout(() => setShowResults(true), 50);
     } catch (err) {
-      setError(err.message || "Unexpected error — please try again.");
+      const isNetworkError =
+        err instanceof TypeError &&
+        String(err.message || "").toLowerCase().includes("fetch");
+      setError(
+        isNetworkError
+          ? "Cannot connect to backend API on port 8000. Start backend and try again."
+          : err.message || "Unexpected error — please try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -327,22 +623,104 @@ function AnalyzeTab() {
           >
             <div className="card-header">
               <h2 className="card-title">AI Annotated</h2>
-              <p className="card-sub">
-                <span className="legend-dot legend-red" /> Lesions &nbsp;
-                <span className="legend-dot legend-purple" /> Hyperpigmentation
-                &nbsp;
-                <span className="legend-dot legend-white" /> Face zone
-              </p>
+              <div className="image-subtabs">
+                <button
+                  className={`image-subtab ${imageSubView === "annotated" ? "image-subtab-active" : ""}`}
+                  onClick={() => setImageSubView("annotated")}
+                  type="button"
+                >
+                  Annotated
+                </button>
+                <button
+                  className={`image-subtab ${imageSubView === "heatmap" ? "image-subtab-active" : ""}`}
+                  onClick={() => setImageSubView("heatmap")}
+                  type="button"
+                >
+                  Heatmap
+                </button>
+                <button
+                  className={`image-subtab ${imageSubView === "original" ? "image-subtab-active" : ""}`}
+                  onClick={() => setImageSubView("original")}
+                  type="button"
+                >
+                  Original
+                </button>
+              </div>
             </div>
             <div className="image-frame annotated-frame annotated-side-frame">
-              {result.annotated_image_base64 ? (
-                <img
-                  src={`data:image/jpeg;base64,${result.annotated_image_base64}`}
-                  alt="Annotated"
-                />
+              {(imageSubView === "annotated" && result.annotated_image_base64) ||
+              (imageSubView === "heatmap" && result.heatmap_image_base64) ||
+              (imageSubView === "original" && previewUrl) ? (
+                <>
+                  {imageSubView === "heatmap" && result.heatmap_image_base64 && (
+                    <button
+                      className="image-popout-btn"
+                      type="button"
+                      onClick={() => setHeatmapOpen(true)}
+                    >
+                      Expand
+                    </button>
+                  )}
+                  <img
+                    src={
+                      imageSubView === "heatmap"
+                        ? `data:image/jpeg;base64,${result.heatmap_image_base64}`
+                        : imageSubView === "original"
+                          ? previewUrl
+                          : `data:image/jpeg;base64,${result.annotated_image_base64}`
+                    }
+                    alt={
+                      imageSubView === "heatmap"
+                        ? "Lesion heatmap"
+                        : imageSubView === "original"
+                          ? "Original upload"
+                          : "Annotated"
+                    }
+                  />
+                </>
               ) : (
                 <div className="img-placeholder">Processing&hellip;</div>
               )}
+            </div>
+          </div>
+        )}
+
+        {heatmapOpen && result?.heatmap_image_base64 && (
+          <div className="heatmap-modal" role="dialog" aria-modal="true" aria-label="Lesion heatmap preview">
+            <button className="heatmap-modal-backdrop" type="button" onClick={closeHeatmapModal} />
+            <div className="heatmap-modal-panel">
+              <div className="heatmap-modal-header">
+                <div>
+                  <p className="report-doc-kicker">Lesion Heatmap</p>
+                  <h4>Full-size focus view</h4>
+                </div>
+                <div className="heatmap-toolbar">
+                  <button className="report-action-btn" type="button" onClick={() => adjustHeatmapZoom(-0.15)}>
+                    -
+                  </button>
+                  <span className="heatmap-zoom-label">{Math.round(heatmapZoom * 100)}%</span>
+                  <button className="report-action-btn" type="button" onClick={() => adjustHeatmapZoom(0.15)}>
+                    +
+                  </button>
+                  <button className="report-action-btn" type="button" onClick={resetHeatmapZoom}>
+                    Reset
+                  </button>
+                  <button className="report-action-btn" type="button" onClick={downloadHeatmapImage}>
+                    Download
+                  </button>
+                  <button className="report-action-btn" type="button" onClick={closeHeatmapModal}>
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="heatmap-modal-frame">
+                <img
+                  className="heatmap-modal-image"
+                  style={{ transform: `scale(${heatmapZoom})` }}
+                  src={`data:image/jpeg;base64,${result.heatmap_image_base64}`}
+                  alt="Enlarged lesion heatmap"
+                />
+              </div>
             </div>
           </div>
         )}
@@ -394,29 +772,29 @@ function AnalyzeTab() {
           {/* 4-col Stat Cards */}
           <div className="stats-row">
             <StatCard
-              icon="🧬"
+              icon="AS"
               label="Acne Severity"
               value={result.acne_severity ?? "—"}
               accent={sevConfig.color}
             />
             <StatCard
-              icon="🔬"
+              icon="LC"
               label="Lesion Count"
               value={result.lesions?.length ?? 0}
               sub="detected lesions"
-              accent="#6366f1"
+              accent="#e5e5e5"
             />
             <StatCard
-              icon="🎨"
+              icon="HP"
               label="Hyperpigmentation"
               value={`${hyperPct.toFixed(1)}%`}
               sub={hyper.severity ?? ""}
-              accent="#8b5cf6"
+              accent="#a3a3a3"
             />
             <StatCard
-              icon="🗺️"
+              icon="MZ"
               label="Most Affected Zone"
-              accent="#f59e0b"
+              accent="#737373"
               value={
                 Object.entries(zoneCounts).sort((a, b) => b[1] - a[1])[0]
                   ? ZONE_LABELS[
@@ -475,10 +853,10 @@ function AnalyzeTab() {
                   percent={hyperPct}
                   color={
                     hyperPct > 20
-                      ? "#ef4444"
+                      ? "#525252"
                       : hyperPct > 10
-                        ? "#f59e0b"
-                        : "#10b981"
+                        ? "#737373"
+                        : "#d4d4d4"
                   }
                 />
                 <div className="hyper-info">
@@ -526,11 +904,28 @@ function AnalyzeTab() {
                 </svg>
                 AI Summary
               </h3>
-              <blockquote className="summary-quote">
-                <span className="quote-mark">"</span>
-                {result.summary}
-                <span className="quote-mark">"</span>
-              </blockquote>
+              <p className="summary-lead">{summaryText}</p>
+              <div className="summary-facts">
+                <span className="summary-fact">Severity: {result.acne_severity}</span>
+                <span className="summary-fact">Lesions: {lesionCount}</span>
+                <span className="summary-fact">Top zone: {topZone}</span>
+                <span className="summary-fact">
+                  Heatmap: {Number(result.hyperpigmentation?.coverage_percent ?? 0).toFixed(1)}% / {result.hyperpigmentation?.severity || "N/A"}
+                </span>
+              </div>
+              <div className="summary-actions">
+                <button className="report-action-btn" type="button" onClick={copySummaryText}>
+                  Copy Summary
+                </button>
+                <button
+                  className="report-action-btn"
+                  type="button"
+                  onClick={() => setHeatmapOpen(true)}
+                  disabled={!result.heatmap_image_base64}
+                >
+                  Maximize Heatmap
+                </button>
+              </div>
               <div className="disclaimer">
                 <svg
                   viewBox="0 0 16 16"
@@ -545,6 +940,81 @@ function AnalyzeTab() {
               </div>
             </div>
           )}
+
+          <div className="card summary-card">
+            <h3 className="detail-title">
+              <svg
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="detail-icon"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M4.25 3A2.25 2.25 0 0 0 2 5.25v9.5A2.25 2.25 0 0 0 4.25 17h11.5A2.25 2.25 0 0 0 18 14.75v-9.5A2.25 2.25 0 0 0 15.75 3H4.25ZM5.5 6.75a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              Detailed AI Report
+            </h3>
+            {reportLoading && (
+              <div className="report-skeleton">
+                <div className="report-loading-row">
+                  <Spinner />
+                  <span>Preparing your dermatology-style report document...</span>
+                </div>
+                <blockquote className="report-quote">
+                  "{REPORT_QUOTES[reportQuoteIndex]}"
+                </blockquote>
+                <div className="report-shimmer-line" />
+                <div className="report-shimmer-line" />
+                <div className="report-shimmer-line short" />
+              </div>
+            )}
+            {!reportLoading && reportError && (
+              <div className="alert alert-error" role="alert">
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="alert-icon"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                {reportError}
+              </div>
+            )}
+            {!reportLoading && detailedReport?.report && (
+              <article className="report-document">
+                <header className="report-doc-header">
+                  <div>
+                    <p className="report-doc-kicker">SkinSight Report Document</p>
+                    <h4>AI Skin Condition Guidance</h4>
+                  </div>
+                  <div className="report-doc-meta">
+                    <span>Model: {detailedReport.model}</span>
+                    <span>Source: {detailedReport.generated_by}</span>
+                  </div>
+                </header>
+                <div className="report-actions">
+                  <button className="report-action-btn" type="button" onClick={exportReportPdf}>
+                    Export PDF
+                  </button>
+                  <button className="report-action-btn" type="button" onClick={copyReportText}>
+                    Copy Text
+                  </button>
+                  <button className="report-action-btn" type="button" onClick={downloadAnalysisJson}>
+                    Download JSON
+                  </button>
+                </div>
+                {!!actionMessage && <p className="report-action-note">{actionMessage}</p>}
+                <pre className="detailed-report-text">{normalizedReportText}</pre>
+                <div className="disclaimer">{detailedReport.disclaimer}</div>
+              </article>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -756,6 +1226,21 @@ function TrackTab() {
             {compareResult.summary && (
               <div className="compare-summary">{compareResult.summary}</div>
             )}
+
+            {Array.isArray(compareResult.stages) && compareResult.stages.length > 0 && (
+              <div className="progress-stages">
+                {compareResult.stages.map((stage) => (
+                  <div key={stage.key} className="progress-stage-card">
+                    <h4>{stage.title}</h4>
+                    <ul>
+                      {stage.bullets.map((item, idx) => (
+                        <li key={`${stage.key}-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -768,6 +1253,40 @@ function TrackTab() {
 ══════════════════════════════════════════════ */
 export default function App() {
   const [activeTab, setActiveTab] = useState("analyze");
+  const [analyzeViewPreset, setAnalyzeViewPreset] = useState("annotated");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showProduct, setShowProduct] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setShowProduct(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => setShowProduct(true), 1800);
+    return () => clearTimeout(timer);
+  }, [isAuthenticated]);
+
+  if (!isAuthenticated) {
+    return <AuthGate onSuccess={() => setIsAuthenticated(true)} />;
+  }
+
+  if (!showProduct) {
+    return (
+      <div className="landing-page">
+        <div className="landing-panel">
+          <p className="landing-kicker">AI Facial Screening</p>
+          <h1 className="landing-title">SkinSight</h1>
+          <p className="landing-sub">
+            Clinical-style visual analysis with acne grading, lesion mapping,
+            and detailed AI guidance.
+          </p>
+          <button className="landing-btn" onClick={() => setShowProduct(true)}>
+            Enter Product
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -776,66 +1295,88 @@ export default function App() {
       <div className="orb orb-3" />
 
       <div className="container">
+        <nav className="top-nav">
+          <div className="top-nav-brand">SkinSight</div>
+          <div className="top-nav-actions">
+            <button
+              className={`top-nav-btn ${activeTab === "analyze" && analyzeViewPreset !== "heatmap" ? "top-nav-btn-active" : ""}`}
+              onClick={() => {
+                setActiveTab("analyze");
+                setAnalyzeViewPreset("annotated");
+              }}
+            >
+              Skin Analysis
+            </button>
+            <button
+              className={`top-nav-btn ${activeTab === "track" ? "top-nav-btn-active" : ""}`}
+              onClick={() => setActiveTab("track")}
+            >
+              Progress Tracking
+            </button>
+            <button
+              className={`top-nav-btn ${activeTab === "analyze" && analyzeViewPreset === "heatmap" ? "top-nav-btn-active" : ""}`}
+              onClick={() => {
+                setActiveTab("analyze");
+                setAnalyzeViewPreset("heatmap");
+              }}
+            >
+              Lesion Heatmap
+            </button>
+          </div>
+        </nav>
+
         {/* Hero */}
         <header className="hero">
-          <div className="hero-badge">
-            <span className="badge-dot" />
-            AI-Powered Analysis
-          </div>
-          <h1 className="hero-title">
-            <span className="gradient-text">SkinSight</span>
-            <span className="hero-title-white"> AI</span>
-          </h1>
-          <p className="hero-sub">
-            Dermatological-grade skin analysis in seconds
-          </p>
-          <div className="hero-features">
-            {[
-              "Acne Detection",
-              "Zone Mapping",
-              "Hyperpigmentation",
-              "Progress Tracking",
-            ].map((f) => (
-              <span key={f} className="feature-pill">
-                {f}
-              </span>
-            ))}
+          <div className="hero-layout">
+            <div className="hero-main">
+              <div className="hero-badge">
+                <span className="badge-dot" />
+                AI-Powered Analysis
+              </div>
+              <h1 className="hero-title">
+                <span className="gradient-text">SkinSight</span>
+                <span className="hero-title-white"> AI</span>
+              </h1>
+              <p className="hero-sub">
+                Dermatological-grade skin analysis in seconds
+              </p>
+              <div className="hero-features">
+                {[
+                  "Acne Detection",
+                  "Zone Mapping",
+                  "Hyperpigmentation",
+                  "Progress Tracking",
+                ].map((f) => (
+                  <span key={f} className="feature-pill">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <aside className="hero-side-cards">
+              <div className="hero-side-card">
+                <p>AI Report</p>
+                <strong>Structured + Exportable</strong>
+              </div>
+              <div className="hero-side-card">
+                <p>Image Views</p>
+                <strong>Annotated / Heatmap / Original</strong>
+              </div>
+              <div className="hero-side-card">
+                <p>Tracking</p>
+                <strong>Now, Short Term, Long Term</strong>
+              </div>
+            </aside>
           </div>
         </header>
 
-        {/* Tabs */}
-        <div className="tabs">
-          <button
-            className={`tab-btn ${activeTab === "analyze" ? "tab-active" : ""}`}
-            onClick={() => setActiveTab("analyze")}
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="tab-icon">
-              <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
-              <path
-                fillRule="evenodd"
-                d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Skin Analysis
-          </button>
-          <button
-            className={`tab-btn ${activeTab === "track" ? "tab-active" : ""}`}
-            onClick={() => setActiveTab("track")}
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="tab-icon">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-13a.75.75 0 0 0-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 0 0 0-1.5h-3.25V5Z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Progress Tracking
-          </button>
-        </div>
-
         {/* Active tab */}
-        {activeTab === "analyze" ? <AnalyzeTab /> : <TrackTab />}
+        {activeTab === "analyze" ? (
+          <AnalyzeTab forcedView={analyzeViewPreset} />
+        ) : (
+          <TrackTab />
+        )}
 
         <footer className="footer">
           <p>

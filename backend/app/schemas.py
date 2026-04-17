@@ -24,6 +24,13 @@ class AnalysisResult(BaseModel):
     hyperpigmentation: HyperpigmentationReport
     summary: str
     annotated_image_base64: str
+    heatmap_image_base64: str
+
+
+class ProgressStage(BaseModel):
+    key: str
+    title: str
+    bullets: list[str]
 
 
 class ProgressReport(BaseModel):
@@ -32,4 +39,17 @@ class ProgressReport(BaseModel):
     followup_lesions: int
     improvement_percent: float
     timeline: str  # "short_term" or "long_term"
+    stages: list[ProgressStage]
     summary: str
+
+
+class DetailedReportRequest(BaseModel):
+    analysis: AnalysisResult
+
+
+class DetailedReportResponse(BaseModel):
+    generated_by: str
+    model: str
+    report: str
+    disclaimer: str
+    created_at: str

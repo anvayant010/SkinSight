@@ -4,6 +4,7 @@
 
 SkinSight AI is an intelligent web application that analyzes facial skin conditions using computer vision and AI, delivering instant, visual, and actionable insights - making professional-level skin analysis accessible to everyone.
 
+
 ---
 
 ## **Problem Statement**

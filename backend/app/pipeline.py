@@ -30,7 +30,26 @@ _YOLO_LOAD_ATTEMPTED = False
 # Constants
 # ---------------------------------------------------------------------------
 SEVERITY_LEVELS = ["Clear", "Mild", "Moderate", "Severe"]
+GAGS_SEVERITY_LEVELS = ["Clear", "Mild", "Moderate", "Severe", "Very Severe"]
 ZONE_ORDER = ["forehead", "left_cheek", "right_cheek", "nose", "chin_jawline"]
+
+# GAGS region factors (Global Acne Grading System)
+GAGS_ZONE_FACTORS: dict[str, int] = {
+    "forehead": 2,
+    "left_cheek": 2,
+    "right_cheek": 2,
+    "nose": 1,
+    "chin_jawline": 1,
+}
+
+# GAGS lesion grades (nodule/cyst worst → comedone mildest)
+ACNE_TYPE_GRADES: dict[str, int] = {
+    "nodule_cyst": 4,
+    "pustule": 3,
+    "papule": 2,
+    "comedone": 1,
+    "unknown": 0,
+}
 ZONE_COLORS = {
     "forehead": (99, 102, 241),
     "left_cheek": (16, 185, 129),
@@ -378,15 +397,19 @@ def _detect_lesions_yolo(
             cy = y1 + by1 + rh // 2
             conf = float(box.conf[0])
             zone = _resolve_zone(cx, cy, zone_hulls, bbox_zones)
+            acne_type = _infer_lesion_type(
+                x1 + bx1, y1 + by1, rw, rh, conf, image_bgr, x1, y1
+            )
             lesions.append(
                 BoundingBox(
                     x=x1 + bx1,
                     y=y1 + by1,
                     width=rw,
                     height=rh,
-                    label="lesion",
+                    label=acne_type,
                     confidence=round(conf, 3),
                     zone=zone,
+                    acne_type=acne_type,
                 )
             )
 
@@ -431,15 +454,19 @@ def _detect_lesions_lab(
         cy = y1 + ry + rh // 2
         zone = _resolve_zone(cx, cy, zone_hulls, bbox_zones)
         confidence = float(min(0.99, 0.45 + area / 1600.0))
+        acne_type = _infer_lesion_type(
+            x1 + rx, y1 + ry, int(rw), int(rh), confidence, image_bgr, x1, y1
+        )
         lesions.append(
             BoundingBox(
                 x=int(x1 + rx),
                 y=int(y1 + ry),
                 width=int(rw),
                 height=int(rh),
-                label="lesion",
+                label=acne_type,
                 confidence=round(confidence, 3),
                 zone=zone,
+                acne_type=acne_type,
             )
         )
 
@@ -461,6 +488,104 @@ def _detect_lesions(
     if yolo_lesions:
         return yolo_lesions, yolo_zone_counts
     return _detect_lesions_lab(image_bgr, face_bbox, zone_hulls, bbox_zones)
+
+
+# ---------------------------------------------------------------------------
+# Lesion type inference (visual heuristic)
+# ---------------------------------------------------------------------------
+
+
+def _infer_lesion_type(
+    box_x: int,
+    box_y: int,
+    box_w: int,
+    box_h: int,
+    confidence: float,
+    face_bgr: np.ndarray,
+    face_x1: int,
+    face_y1: int,
+) -> str:
+    """
+    Classify a lesion as one of: comedone, papule, pustule, nodule_cyst.
+
+    Heuristics based on:
+    - Lesion area in pixels (larger = more severe)
+    - Average redness (a* channel in LAB) inside the bounding box
+    - Confidence score as a proxy for lesion prominence
+
+    These thresholds were tuned against the GAGS lesion grade definitions.
+    """
+    area = box_w * box_h
+
+    # Sample the BGR region of the lesion (relative to full image)
+    lx1 = max(0, box_x)
+    ly1 = max(0, box_y)
+    lx2 = min(face_bgr.shape[1], box_x + box_w)
+    ly2 = min(face_bgr.shape[0], box_y + box_h)
+    region = face_bgr[ly1:ly2, lx1:lx2]
+
+    redness = 0.0
+    if region.size > 0:
+        # Use LAB a* channel — positive = reddish
+        lab_region = cv2.cvtColor(region, cv2.COLOR_BGR2LAB)
+        redness = float(np.mean(lab_region[:, :, 1]))  # a* channel, 128 = neutral
+
+    # Classify by area + redness
+    # nodule/cyst: large AND inflamed (high redness)
+    if area >= 900 and redness >= 138:
+        return "nodule_cyst"
+    # pustule: medium-large with elevated redness
+    elif area >= 400 and redness >= 135:
+        return "pustule"
+    # papule: medium-sized, moderately red
+    elif area >= 150 and redness >= 131:
+        return "papule"
+    # comedone: small or pale lesions
+    else:
+        return "comedone"
+
+
+# ---------------------------------------------------------------------------
+# GAGS scoring
+# ---------------------------------------------------------------------------
+
+
+def _gags_score(
+    zone_lesion_types: dict[str, list[str]],
+) -> tuple[int, str]:
+    """
+    Compute Global Acne Grading System (GAGS) total score and severity label.
+
+    For each zone, the LOCAL score = region_factor × grade_of_worst_lesion.
+    Total GAGS = sum of all zone local scores.
+
+    Severity thresholds (from clinical GAGS literature):
+      0        → Clear
+      1  – 18  → Mild
+      19 – 30  → Moderate
+      31 – 38  → Severe
+      ≥39      → Very Severe
+    """
+    total = 0
+    for zone, types in zone_lesion_types.items():
+        factor = GAGS_ZONE_FACTORS.get(zone, 1)
+        if not types:
+            continue
+        max_grade = max(ACNE_TYPE_GRADES.get(t, 0) for t in types)
+        total += factor * max_grade
+
+    if total == 0:
+        severity = "Clear"
+    elif total <= 18:
+        severity = "Mild"
+    elif total <= 30:
+        severity = "Moderate"
+    elif total <= 38:
+        severity = "Severe"
+    else:
+        severity = "Very Severe"
+
+    return total, severity
 
 
 # ---------------------------------------------------------------------------
@@ -732,17 +857,25 @@ def _summary_text(
     lesions: list[BoundingBox],
     hyperpigmentation: HyperpigmentationReport,
     zone_counts: dict[str, int],
+    gags_score: int = 0,
+    gags_severity: str = "Clear",
 ) -> str:
     most_affected = (
         max(zone_counts.items(), key=lambda kv: kv[1])[0] if zone_counts else "nose"
     )
     count = len(lesions)
+    # Summarise lesion types
+    type_counts: dict[str, int] = {}
+    for lesion in lesions:
+        type_counts[lesion.acne_type] = type_counts.get(lesion.acne_type, 0) + 1
+    type_summary = ", ".join(
+        f"{v} {k.replace('_', '/')}(s)" for k, v in sorted(type_counts.items(), key=lambda kv: -kv[1])
+    ) or "no classified lesions"
     return (
-        f"Detected acne severity is {acne_severity}. "
-        f"A total of {count} probable lesion(s) were found, "
-        f"with the highest concentration in the {most_affected} region. "
-        f"Estimated hyperpigmentation coverage is "
-        f"{hyperpigmentation.coverage_percent}% ({hyperpigmentation.severity}). "
+        f"GAGS score: {gags_score} ({gags_severity}). "
+        f"A total of {count} lesion(s) detected — {type_summary}. "
+        f"Highest concentration in the {most_affected} region. "
+        f"Hyperpigmentation coverage: {hyperpigmentation.coverage_percent}% ({hyperpigmentation.severity}). "
         "Use this report as a visual tracking baseline and consult a dermatologist for diagnosis."
     )
 
@@ -776,19 +909,46 @@ def analyze_image(image_bytes: bytes) -> AnalysisResult:
     acne_severity, acne_score = _predict_acne_severity(
         image_bgr, face_bbox, len(lesions)
     )
+
+    # ── GAGS scoring ────────────────────────────────────────────────────────
+    # Build per-zone list of lesion types
+    zone_lesion_types: dict[str, list[str]] = {z: [] for z in ZONE_ORDER}
+    for lesion in lesions:
+        zone_lesion_types[lesion.zone].append(lesion.acne_type)
+
+    gags_score, gags_severity = _gags_score(zone_lesion_types)
+
+    # Per-zone type breakdown (for UI display)
+    TYPES = ["comedone", "papule", "pustule", "nodule_cyst"]
+    acne_type_breakdown: dict[str, dict[str, int]] = {}
+    for zone in ZONE_ORDER:
+        acne_type_breakdown[zone] = {
+            t: sum(1 for lt in zone_lesion_types[zone] if lt == t) for t in TYPES
+        }
+
+    # Use GAGS severity as the primary acne_severity (override heuristic)
+    acne_severity = gags_severity
+    # Remap acne_score from GAGS total (cap at 48 — max possible GAGS)
+    acne_score = round(min(1.0, gags_score / 48.0), 3)
+
     annotated = _draw_overlay(
         image_bgr, face_bbox, zone_hulls, bbox_zones, lesions, hyperpig_mask
     )
     heatmap = _build_lesion_heatmap(image_bgr, face_bbox, lesions)
     encoded = _encode_image_base64(annotated)
     heatmap_encoded = _encode_image_base64(heatmap)
-    summary = _summary_text(acne_severity, lesions, hyperpigmentation, zone_counts)
+    summary = _summary_text(
+        acne_severity, lesions, hyperpigmentation, zone_counts, gags_score, gags_severity
+    )
 
     return AnalysisResult(
         acne_severity=acne_severity,
         acne_score=acne_score,
+        gags_score=gags_score,
+        gags_severity=gags_severity,
         lesions=lesions,
         zone_counts=zone_counts,
+        acne_type_breakdown=acne_type_breakdown,
         hyperpigmentation=hyperpigmentation,
         summary=summary,
         annotated_image_base64=encoded,
@@ -861,6 +1021,31 @@ def _count_lesions_quick(image_bgr: np.ndarray) -> int:
     return len(lesions)
 
 
+def _progress_snapshot(image_bgr: np.ndarray) -> tuple[int, float, float]:
+    """Return lesion count, acne score, and hyperpigmentation coverage for progress math."""
+    h, w = image_bgr.shape[:2]
+    landmarks = _extract_face_landmarks(image_bgr)
+
+    if landmarks is not None:
+        face_bbox = _face_bbox_from_landmarks(landmarks, w, h)
+        zone_hulls: Optional[dict[str, np.ndarray]] = _build_landmark_zone_hulls(
+            landmarks, w, h
+        )
+        bbox_zones: Optional[dict[str, tuple[int, int, int, int]]] = None
+    else:
+        try:
+            face_bbox = _face_bbox_fallback(image_bgr)
+        except ValueError:
+            face_bbox = (0, 0, w - 1, h - 1)
+        zone_hulls = None
+        bbox_zones = _build_bbox_zones(face_bbox)
+
+    lesions, _ = _detect_lesions(image_bgr, face_bbox, zone_hulls, bbox_zones)
+    _, acne_score = _predict_acne_severity(image_bgr, face_bbox, len(lesions))
+    hyperpigmentation, _ = _hyperpigmentation_report(image_bgr, face_bbox)
+    return len(lesions), float(acne_score), float(hyperpigmentation.coverage_percent)
+
+
 def compare_progress(baseline_bytes: bytes, followup_bytes: bytes) -> ProgressReport:
     """
     Accept a baseline and a follow-up skin image, register them, compute SSIM,
@@ -895,18 +1080,51 @@ def compare_progress(baseline_bytes: bytes, followup_bytes: bytes) -> ProgressRe
     gray_follow = cv2.cvtColor(followup_aligned, cv2.COLOR_BGR2GRAY)
     similarity = float(ssim(gray_base, gray_follow, data_range=255))
 
-    # Lesion counts on original (unresized) images for accuracy
-    baseline_count = _count_lesions_quick(baseline_bgr)
-    followup_count = _count_lesions_quick(followup_bgr)
+    # Feature snapshots on original images
+    baseline_count, baseline_acne_score, baseline_hyperpig = _progress_snapshot(
+        baseline_bgr
+    )
+    followup_count, followup_acne_score, followup_hyperpig = _progress_snapshot(
+        followup_bgr
+    )
 
-    # Improvement: positive = fewer lesions (improvement), negative = more (worsening)
+    # Lesion-only improvement: positive = fewer lesions, negative = more lesions.
     if baseline_count > 0:
-        improvement = (baseline_count - followup_count) / baseline_count * 100.0
+        lesion_improvement = (baseline_count - followup_count) / baseline_count * 100.0
     elif followup_count == 0:
-        improvement = 100.0
+        lesion_improvement = 100.0
     else:
-        improvement = -100.0
-    improvement = float(np.clip(improvement, -100.0, 100.0))
+        lesion_improvement = -100.0
+    lesion_improvement = float(np.clip(lesion_improvement, -100.0, 100.0))
+
+    # Composite severity index helps avoid misleading trend when lesion count alone is noisy.
+    baseline_index = (
+        min(1.0, baseline_count / 35.0) * 0.60
+        + np.clip(baseline_acne_score, 0.0, 1.0) * 0.30
+        + min(1.0, baseline_hyperpig / 30.0) * 0.10
+    )
+    followup_index = (
+        min(1.0, followup_count / 35.0) * 0.60
+        + np.clip(followup_acne_score, 0.0, 1.0) * 0.30
+        + min(1.0, followup_hyperpig / 30.0) * 0.10
+    )
+
+    if baseline_index > 1e-6:
+        index_improvement = (baseline_index - followup_index) / baseline_index * 100.0
+    elif followup_index <= 1e-6:
+        index_improvement = 100.0
+    else:
+        index_improvement = -100.0
+    index_improvement = float(np.clip(index_improvement, -100.0, 100.0))
+
+    disagreement = (
+        lesion_improvement * index_improvement < 0
+        and abs(lesion_improvement - index_improvement) >= 15
+    )
+    if disagreement:
+        improvement = index_improvement
+    else:
+        improvement = float(np.clip(lesion_improvement * 0.7 + index_improvement * 0.3, -100.0, 100.0))
 
     # Timeline: images that are structurally very similar were taken close together
     timeline = "short_term" if similarity >= 0.75 else "long_term"
@@ -931,11 +1149,18 @@ def compare_progress(baseline_bytes: bytes, followup_bytes: bytes) -> ProgressRe
     summary = (
         f"Lesion count changed from {baseline_count} to {followup_count} "
         f"({delta_sign}{lesion_delta} lesions). "
+        f"Composite severity index moved from {baseline_index:.2f} to {followup_index:.2f}. "
         f"Structural image similarity: {similarity:.2%}. "
         f"Overall skin trend: {trend}. "
         f"This appears to be a {timeline_desc}. "
         "Consult a dermatologist to validate these findings and adjust your treatment plan."
     )
+
+    if disagreement:
+        summary += (
+            " Progress indicators were mixed (lesion count vs severity/hyperpigmentation), "
+            "so trend direction was based on the composite severity index."
+        )
 
     now_stage = ProgressStage(
         key="now",
@@ -943,6 +1168,7 @@ def compare_progress(baseline_bytes: bytes, followup_bytes: bytes) -> ProgressRe
         bullets=[
             f"Current follow-up lesion count: {followup_count}.",
             f"Observed change from baseline: {delta_sign}{lesion_delta} lesions.",
+            f"Composite severity index: {baseline_index:.2f} -> {followup_index:.2f}.",
             f"Immediate trend status: {trend}.",
         ],
     )

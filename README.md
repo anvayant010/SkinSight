@@ -99,3 +99,16 @@ flowchart TD
     class D,E,F,G,H core
     class I,J output
 ```
+
+---
+
+## Backup Support
+
+Environment variables:
+
+- `SKINSIGHT_SQLITE_PATH` (optional, default `backend/data/skinsight_backup.sqlite3`): SQLite file path for image/result backups.
+
+Backups saved in SQLite:
+
+- `analyze_backup`: original uploaded image + `/analyze` response JSON
+- `track_backup`: baseline/followup images + `/track` response JSON

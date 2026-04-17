@@ -534,6 +534,39 @@ button {
     box-shadow: none;
 }
 
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition), opacity var(--transition);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.track-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
 .btn-large {
     padding: 16px 32px;
     font-size: 16px;
@@ -1740,6 +1773,10 @@ button {
         grid-template-columns: 1fr;
     }
 
+    .track-actions {
+        grid-template-columns: 1fr;
+    }
+
     .heatmap-modal-panel {
         width: 100%;
         max-height: 94vh;
@@ -2007,6 +2044,17 @@ body {
     background: #000000;
     box-shadow: none;
     transform: none;
+}
+
+.btn-secondary {
+    background: #ffffff;
+    border-color: #d0d0d0;
+    color: #171717;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: #f8f8f8;
+    border-color: #111111;
 }
 
 .drop-zone:hover,
@@ -2490,4 +2538,382 @@ body {
     }
 }
 
+/* ═══════════════════════════════════════════════════
+   ACNE TYPE BREAKDOWN CARD
+═══════════════════════════════════════════════════ */
 
+.acne-type-card {
+    width: 100%;
+}
+
+.gags-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 10px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    background: rgba(163, 230, 53, 0.15);
+    border: 1px solid rgba(163, 230, 53, 0.35);
+    color: #a3e635;
+    vertical-align: middle;
+}
+
+.acne-type-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+    margin-bottom: 16px;
+}
+
+.acne-type-zone {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+}
+
+.acne-type-zone-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.acne-type-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.acne-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.acne-pill-comedone {
+    background: rgba(163, 230, 53, 0.14);
+    border-color: rgba(163, 230, 53, 0.35);
+    color: #a3e635;
+}
+
+.acne-pill-papule {
+    background: rgba(251, 146, 60, 0.14);
+    border-color: rgba(251, 146, 60, 0.35);
+    color: #fb923c;
+}
+
+.acne-pill-pustule {
+    background: rgba(249, 115, 22, 0.16);
+    border-color: rgba(249, 115, 22, 0.4);
+    color: #f97316;
+}
+
+.acne-pill-nodule_cyst {
+    background: rgba(239, 68, 68, 0.16);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.acne-type-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.acne-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.acne-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════
+   WEBCAM MODAL & CONTROLS
+═══════════════════════════════════════════════════ */
+
+.webcam-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.webcam-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+}
+
+.webcam-panel {
+    position: relative;
+    width: 100%;
+    max-width: 540px;
+    background: #12121a;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+}
+
+.webcam-header {
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+}
+
+.webcam-header h3 {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.webcam-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 28px;
+    line-height: 1;
+    padding: 0;
+    transition: color var(--transition);
+}
+
+.webcam-close:hover {
+    color: var(--text-primary);
+}
+
+.webcam-view-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4/3;
+    background: #000;
+    overflow: hidden;
+}
+
+.webcam-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* Mirror effect */
+}
+
+/* Face Alignment Guide */
+.face-guide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.face-guide-svg {
+    width: 65%;
+    height: 65%;
+    opacity: 0.8;
+}
+
+.face-outline {
+    stroke-dasharray: 8 8;
+    animation: guide-pulse 3s infinite ease-in-out;
+}
+
+@keyframes guide-pulse {
+    0%, 100% { stroke-opacity: 0.4; }
+    50% { stroke-opacity: 0.9; }
+}
+
+.face-guide-text {
+    margin-top: 10px;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    backdrop-filter: blur(4px);
+}
+
+.webcam-error {
+    position: absolute;
+    inset: 0;
+    background: rgba(220, 38, 38, 0.9);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    text-align: center;
+    font-weight: 600;
+}
+
+.webcam-footer {
+    padding: 24px;
+    text-align: center;
+    background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.2));
+}
+
+.capture-btn {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: white;
+    padding: 6px;
+    border: 4px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    transition: transform 0.2s, background 0.2s;
+    margin-bottom: 8px;
+}
+
+.capture-btn:hover:not(:disabled) {
+    transform: scale(1.05);
+}
+
+.capture-btn:active:not(:disabled) {
+    transform: scale(0.9);
+}
+
+.capture-btn-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid #000;
+}
+
+.capture-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+/* ── UI Adjustments for Webcam Buttons ── */
+
+.drop-actions, .mini-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 12px;
+}
+
+.btn-drop-action {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border-light);
+    color: var(--text-primary);
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 600;
+    transition: all var(--transition);
+}
+
+.btn-drop-action:hover {
+    background: var(--primary);
+    color: #000;
+    border-color: var(--primary);
+}
+
+.mini-action-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 650;
+    transition: all var(--transition);
+}
+
+.mini-action-btn:hover {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.05);
+}
+
+.mini-label-main {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.drop-overlay-controls, .mini-overlay-controls {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    opacity: 0;
+    transition: opacity var(--transition);
+    backdrop-filter: blur(4px);
+    border-radius: inherit;
+}
+
+.drop-zone:hover .drop-overlay-controls,
+.mini-drop:hover .mini-overlay-controls {
+    opacity: 1;
+}
+
+.overlay-btn {
+    background: #fff;
+    color: #000;
+    border: none;
+    padding: 7px 15px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.mini-btn-icon {
+    background: #fff;
+    border: none;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 16px;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.mini-btn-icon:hover {
+    transform: scale(1.1);
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { jsPDF } from "jspdf";
 import "./styles.css";
 
@@ -14,13 +14,14 @@ const ZONE_LABELS = {
 
 const SEVERITY_CONFIG = {
   Clear: { color: "#d4d4d4", bg: "rgba(212,212,212,0.16)", label: "Clear" },
-  Mild: { color: "#a3a3a3", bg: "rgba(163,163,163,0.18)", label: "Mild" },
+  Mild: { color: "#a3e635", bg: "rgba(163,230,53,0.14)", label: "Mild" },
   Moderate: {
-    color: "#737373",
-    bg: "rgba(115,115,115,0.2)",
+    color: "#fb923c",
+    bg: "rgba(251,146,60,0.16)",
     label: "Moderate",
   },
-  Severe: { color: "#525252", bg: "rgba(82,82,82,0.24)", label: "Severe" },
+  Severe: { color: "#ef4444", bg: "rgba(239,68,68,0.18)", label: "Severe" },
+  "Very Severe": { color: "#dc2626", bg: "rgba(220,38,38,0.22)", label: "Very Severe" },
 };
 
 function getSeverityConfig(s) {
@@ -96,9 +97,9 @@ function ZoneBar({ label, count, max }) {
   );
 }
 
-function DropZone({ file, previewUrl, onFile }) {
+function DropZone({ file, previewUrl, onFile, onCameraOpen }) {
   const [dragging, setDragging] = useState(false);
-  const ref = { current: null };
+  const ref = useRef(null);
   return (
     <div
       className={`drop-zone ${dragging ? "drag-over" : ""} ${file ? "has-file" : ""}`}
@@ -113,9 +114,7 @@ function DropZone({ file, previewUrl, onFile }) {
         const f = e.dataTransfer?.files?.[0];
         if (f && f.type.startsWith("image/")) onFile(f);
       }}
-      onClick={() => ref.current?.click()}
       tabIndex={0}
-      onKeyDown={(e) => e.key === "Enter" && ref.current?.click()}
     >
       <input
         ref={ref}
@@ -130,17 +129,29 @@ function DropZone({ file, previewUrl, onFile }) {
       {file && previewUrl ? (
         <div className="drop-preview">
           <img src={previewUrl} alt="preview" className="preview-img" />
-          <div className="drop-overlay">
-            <UploadIcon />
-            <span>Change photo</span>
+          <div className="drop-overlay-controls">
+            <button className="overlay-btn" onClick={() => ref.current?.click()}>
+              Browse
+            </button>
+            <button className="overlay-btn" onClick={onCameraOpen}>
+              Camera
+            </button>
           </div>
         </div>
       ) : (
         <div className="drop-placeholder">
           <UploadIcon />
           <p className="drop-title">
-            Drag &amp; drop or <span className="drop-link">browse</span>
+            Drag &amp; drop or use:
           </p>
+          <div className="drop-actions">
+            <button className="btn-drop-action" onClick={() => ref.current?.click()}>
+              Browse Files
+            </button>
+            <button className="btn-drop-action" onClick={(e) => { e.stopPropagation(); onCameraOpen(); }}>
+              Live Camera
+            </button>
+          </div>
           <p className="drop-hint">
             JPG, PNG, WebP &mdash; front-facing selfie
           </p>
@@ -150,8 +161,8 @@ function DropZone({ file, previewUrl, onFile }) {
   );
 }
 
-function MiniDrop({ label, file, previewUrl, onFile }) {
-  const ref = { current: null };
+function MiniDrop({ label, file, previewUrl, onFile, onCameraOpen }) {
+  const ref = useRef(null);
   const [dragging, setDragging] = useState(false);
   return (
     <div
@@ -167,9 +178,7 @@ function MiniDrop({ label, file, previewUrl, onFile }) {
         const f = e.dataTransfer?.files?.[0];
         if (f && f.type.startsWith("image/")) onFile(f);
       }}
-      onClick={() => ref.current?.click()}
       tabIndex={0}
-      onKeyDown={(e) => e.key === "Enter" && ref.current?.click()}
     >
       <input
         ref={ref}
@@ -184,12 +193,22 @@ function MiniDrop({ label, file, previewUrl, onFile }) {
       {file && previewUrl ? (
         <div className="mini-preview">
           <img src={previewUrl} alt={label} />
-          <span className="mini-change">Tap to change</span>
+          <div className="mini-overlay-controls">
+            <button className="mini-btn-icon" onClick={() => ref.current?.click()} title="Browse">
+              📁
+            </button>
+            <button className="mini-btn-icon" onClick={onCameraOpen} title="Camera">
+              📷
+            </button>
+          </div>
         </div>
       ) : (
         <div className="mini-placeholder">
-          <UploadIcon />
-          <span>{label}</span>
+          <span className="mini-label-main">{label}</span>
+          <div className="mini-actions">
+            <button className="mini-action-btn" onClick={() => ref.current?.click()}>Browse</button>
+            <button className="mini-action-btn" onClick={onCameraOpen}>Camera</button>
+          </div>
         </div>
       )}
     </div>
@@ -205,6 +224,112 @@ function StatCard({ icon, label, value, sub, accent }) {
         <span className="stat-value">{value}</span>
         {sub && <span className="stat-sub">{sub}</span>}
       </div>
+    </div>
+  );
+}
+
+/* ── Webcam Components ── */
+
+function WebcamModal({ isOpen, onClose, onCapture }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [stream, setStream] = useState(null);
+  const [error, setError] = useState("");
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      setStream(s);
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+      }
+    } catch (err) {
+      setError("Camera access denied. Please check permissions.");
+    }
+  }, []);
+
+  const stopCamera = useCallback(() => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      setStream(null);
+    }
+  }, [stream]);
+
+  useEffect(() => {
+    if (isOpen) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => stopCamera();
+  }, [isOpen]);
+
+  const capture = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Mirror the image for the capture if using front camera
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    canvas.toBlob((blob) => {
+      if (blob) {
+        const file = new File([blob], `selfie-${Date.now()}.jpg`, { type: "image/jpeg" });
+        onCapture(file);
+        onClose();
+      }
+    }, "image/jpeg", 0.9);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="webcam-modal">
+      <div className="webcam-backdrop" onClick={onClose} />
+      <div className="webcam-panel">
+        <div className="webcam-header">
+          <h3>Live Selfie Capture</h3>
+          <button className="webcam-close" onClick={onClose}>&times;</button>
+        </div>
+        
+        <div className="webcam-view-wrap">
+          <video ref={videoRef} autoPlay playsInline className="webcam-video" />
+          
+          {/* Face Alignment Guide */}
+          <div className="face-guide">
+            <svg viewBox="0 0 200 200" className="face-guide-svg">
+              <path 
+                className="face-outline"
+                d="M100,30 C60,30 40,80 40,120 C40,170 100,185 100,185 C100,185 160,170 160,120 C160,80 140,30 100,30 Z" 
+                fill="none" 
+                stroke="rgba(255,255,255,0.4)" 
+                strokeWidth="2" 
+                strokeDasharray="5,5"
+              />
+            </svg>
+            <p className="face-guide-text">Align your face inside the guide</p>
+          </div>
+
+          {error && <div className="webcam-error">{error}</div>}
+        </div>
+
+        <div className="webcam-footer">
+          <button className="capture-btn" onClick={capture} disabled={!stream}>
+            <div className="capture-btn-inner" />
+          </button>
+          <p className="capture-hint">Tap to capture</p>
+        </div>
+      </div>
+      <canvas ref={canvasRef} style={{ display: "none" }} />
     </div>
   );
 }
@@ -316,10 +441,7 @@ function AuthGate({ onSuccess }) {
   );
 }
 
-/* ══════════════════════════════════════════════
-   ANALYZE TAB
-══════════════════════════════════════════════ */
-function AnalyzeTab({ forcedView = "annotated" }) {
+/* ═══════════════════════════�function AnalyzeTab({ forcedView = "annotated" }) {
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -333,12 +455,15 @@ function AnalyzeTab({ forcedView = "annotated" }) {
   const [showResults, setShowResults] = useState(false);
   const [heatmapOpen, setHeatmapOpen] = useState(false);
   const [heatmapZoom, setHeatmapZoom] = useState(1);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
 
   const previewUrl = useMemo(
     () => (file ? URL.createObjectURL(file) : null),
     [file],
   );
 
+  // ... (useMemo for normalizedReportText, summaryText, etc.) stays mostly same
+  // Inserting normalizedReportText here manually to ensure it's present
   const normalizedReportText = useMemo(() => {
     const raw = detailedReport?.report ?? "";
     return raw
@@ -363,134 +488,8 @@ function AnalyzeTab({ forcedView = "annotated" }) {
     return entries.sort((a, b) => b[1] - a[1])[0][0];
   }, [result]);
 
-  const closeHeatmapModal = () => {
-    setHeatmapOpen(false);
-    setHeatmapZoom(1);
-  };
-
-  const adjustHeatmapZoom = (delta) => {
-    setHeatmapZoom((z) => Math.min(3, Math.max(0.7, +(z + delta).toFixed(2))));
-  };
-
-  const resetHeatmapZoom = () => setHeatmapZoom(1);
-
-  const exportReportPdf = () => {
-    if (!detailedReport?.report) return;
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 42;
-    const usableWidth = pageWidth - margin * 2;
-    let y = margin;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("SkinSight AI Report", margin, y);
-    y += 22;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(`Model: ${detailedReport.model}`, margin, y);
-    doc.text(`Source: ${detailedReport.generated_by}`, pageWidth - margin, y, {
-      align: "right",
-    });
-    y += 18;
-
-    doc.setDrawColor(190);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 16;
-
-    doc.setFontSize(11);
-    const lines = doc.splitTextToSize(normalizedReportText, usableWidth);
-    for (const line of lines) {
-      if (y > pageHeight - margin) {
-        doc.addPage();
-        y = margin;
-      }
-      doc.text(line, margin, y);
-      y += 16;
-    }
-
-    const safeStamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-    doc.save(`skinsight-report-${safeStamp}.pdf`);
-    setActionMessage("Report exported as PDF.");
-  };
-
-  const copyReportText = async () => {
-    if (!normalizedReportText) return;
-    await navigator.clipboard.writeText(normalizedReportText);
-    setActionMessage("Report copied to clipboard.");
-  };
-
-  const copySummaryText = async () => {
-    if (!result) return;
-    const lines = [
-      `Severity: ${result.acne_severity}`,
-      `Lesions: ${lesionCount}`,
-      `Top zone: ${topZone}`,
-      `Hyperpigmentation: ${Number(result.hyperpigmentation?.coverage_percent ?? 0).toFixed(1)}% (${result.hyperpigmentation?.severity ?? "N/A"})`,
-      `Summary: ${summaryText}`,
-    ];
-    await navigator.clipboard.writeText(lines.join("\n"));
-    setActionMessage("Summary copied to clipboard.");
-  };
-
-  const downloadAnalysisJson = () => {
-    if (!result) return;
-    const payload = {
-      analysis: result,
-      report: detailedReport ?? null,
-      exported_at: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "skinsight-analysis.json";
-    a.click();
-    URL.revokeObjectURL(url);
-    setActionMessage("Analysis JSON downloaded.");
-  };
-
-  const downloadHeatmapImage = () => {
-    if (!result?.heatmap_image_base64) return;
-    const a = document.createElement("a");
-    a.href = `data:image/jpeg;base64,${result.heatmap_image_base64}`;
-    a.download = `skinsight-heatmap-${Date.now()}.jpg`;
-    a.click();
-    setActionMessage("Heatmap image downloaded.");
-  };
-
-  useEffect(() => {
-    setImageSubView(forcedView);
-  }, [forcedView]);
-
-  useEffect(() => {
-    if (!reportLoading) return undefined;
-    const quoteTimer = setInterval(() => {
-      setReportQuoteIndex((i) => (i + 1) % REPORT_QUOTES.length);
-    }, 2400);
-    return () => clearInterval(quoteTimer);
-  }, [reportLoading]);
-
-  useEffect(() => {
-    if (!heatmapOpen) return undefined;
-    const onKeyDown = (evt) => {
-      if (evt.key === "Escape") closeHeatmapModal();
-    };
-    const oldOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.body.style.overflow = oldOverflow;
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [heatmapOpen]);
-
   const onAnalyze = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     if (!file) {
       setError("Please upload a selfie first.");
       return;
@@ -550,63 +549,53 @@ function AnalyzeTab({ forcedView = "annotated" }) {
     }
   };
 
+  const closeHeatmapModal = () => { setHeatmapOpen(false); setHeatmapZoom(1); };
+  const adjustHeatmapZoom = (delta) => setHeatmapZoom((z) => Math.min(3, Math.max(0.7, +(z + delta).toFixed(2))));
+  const resetHeatmapZoom = () => setHeatmapZoom(1);
+
   const sevConfig = result ? getSeverityConfig(result.acne_severity) : null;
-  const zoneCounts = result?.zone_counts ?? {};
-  const maxZone = Math.max(0, ...Object.values(zoneCounts));
-  const hyper = result?.hyperpigmentation ?? {};
-  const hyperPct = parseFloat(hyper.coverage_percent ?? 0);
-  // acne_score is [0..1]; display as percentage
+  const hyperIdx = result?.hyperpigmentation?.coverage_percent ?? 0;
+  const hyperPct = parseFloat(hyperIdx);
   const acneScorePct = ((result?.acne_score ?? 0) * 100).toFixed(1);
 
   return (
     <div className="tab-content">
-      {/* ── Upload + Annotated side-by-side ── */}
+      <WebcamModal 
+        isOpen={isCameraOpen} 
+        onClose={() => setIsCameraOpen(false)} 
+        onCapture={(f) => { setFile(f); setIsCameraOpen(false); }}
+      />
+      
       <div className="analyze-top-row">
         <section className="card upload-card">
           <div className="card-header">
-            <h2 className="card-title">Upload Your Photo</h2>
+            <h2 className="card-title">Upload or Take Photo</h2>
             <p className="card-sub">
               Well-lit, front-facing selfie for best results
             </p>
           </div>
-          <form onSubmit={onAnalyze}>
-            <DropZone file={file} previewUrl={previewUrl} onFile={setFile} />
-            {error && (
-              <div className="alert alert-error" role="alert">
-                <svg
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                  className="alert-icon"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                {error}
-              </div>
-            )}
-            <button
-              type="submit"
-              className="btn-primary btn-large"
-              disabled={loading || !file}
-            >
-              {loading ? (
-                <>
-                  <Spinner /> Analyzing&hellip;
-                </>
-              ) : (
-                <>
-                  <svg
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    className="btn-icon"
-                  >
-                    <path d="M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
-                    <path
-                      fillRule="evenodd"
-                      d="M.664 10.59a1.651 1.651 0 0 1 0-1.186A10.004 10.004 0 0 1 10 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0 1 10 17c-4.257 0-7.893-2.66-9.336-6.41ZM14 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"
+          <DropZone 
+            file={file} 
+            previewUrl={previewUrl} 
+            onFile={setFile} 
+            onCameraOpen={() => setIsCameraOpen(true)}
+          />
+          {error && (
+            <div className="alert alert-error" role="alert">
+              <svg viewBox="0 0 20 20" fill="currentColor" className="alert-icon">
+                <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+              </svg>
+              {error}
+            </div>
+          )}
+          <button
+            onClick={onAnalyze}
+            className="btn-primary btn-large"
+            disabled={loading || !file}
+          >
+            {loading ? <Spinner /> : "Analyze Skin"}
+          </button>
+        </section>"
                       clipRule="evenodd"
                     />
                   </svg>
@@ -773,8 +762,9 @@ function AnalyzeTab({ forcedView = "annotated" }) {
           <div className="stats-row">
             <StatCard
               icon="AS"
-              label="Acne Severity"
-              value={result.acne_severity ?? "—"}
+              label="GAGS Severity"
+              value={result.gags_severity ?? result.acne_severity ?? "—"}
+              sub={`GAGS Score: ${result.gags_score ?? 0} / 48`}
               accent={sevConfig.color}
             />
             <StatCard
@@ -887,6 +877,46 @@ function AnalyzeTab({ forcedView = "annotated" }) {
             </div>
           </div>
 
+          {/* Acne Type Breakdown — per zone grid */}
+          {result.acne_type_breakdown && Object.keys(result.acne_type_breakdown).length > 0 && (
+            <div className="card detail-card acne-type-card">
+              <h3 className="detail-title">
+                <svg viewBox="0 0 20 20" fill="currentColor" className="detail-icon">
+                  <path fillRule="evenodd" d="M3.5 2A1.5 1.5 0 0 0 2 3.5v13A1.5 1.5 0 0 0 3.5 18h13a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 16.5 2h-13Zm6.75 3.25a.75.75 0 0 0-1.5 0v6.5a.75.75 0 0 0 1.5 0v-6.5Zm3.25 2.5a.75.75 0 0 0-1.5 0v4a.75.75 0 0 0 1.5 0v-4Zm-6.5 2a.75.75 0 0 0-1.5 0v2a.75.75 0 0 0 1.5 0v-2Z" clipRule="evenodd" />
+                </svg>
+                Acne Type Breakdown <span className="gags-badge">GAGS Score: {result.gags_score ?? 0}</span>
+              </h3>
+              <div className="acne-type-grid">
+                {Object.entries(result.acne_type_breakdown).map(([zone, types]) => {
+                  const total = Object.values(types).reduce((a, b) => a + b, 0);
+                  if (total === 0) return null;
+                  return (
+                    <div key={zone} className="acne-type-zone">
+                      <div className="acne-type-zone-label">{ZONE_LABELS[zone] ?? zone}</div>
+                      <div className="acne-type-pills">
+                        {Object.entries(types).map(([t, n]) =>
+                          n > 0 ? (
+                            <span key={t} className={`acne-pill acne-pill-${t}`}>
+                              {n} {t.replace("_", "/")}
+                            </span>
+                          ) : null
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="acne-type-legend">
+                {[["comedone","Comedone","#a3e635"],["papule","Papule","#fb923c"],["pustule","Pustule","#f97316"],["nodule_cyst","Nodule/Cyst","#ef4444"]].map(([t, label, col]) => (
+                  <span key={t} className="acne-legend-item">
+                    <span className="acne-legend-dot" style={{background: col}} />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Summary */}
           {result.summary && (
             <div className="card summary-card">
@@ -906,11 +936,11 @@ function AnalyzeTab({ forcedView = "annotated" }) {
               </h3>
               <p className="summary-lead">{summaryText}</p>
               <div className="summary-facts">
-                <span className="summary-fact">Severity: {result.acne_severity}</span>
+                <span className="summary-fact">GAGS: {result.gags_score ?? 0} ({result.gags_severity ?? result.acne_severity})</span>
                 <span className="summary-fact">Lesions: {lesionCount}</span>
                 <span className="summary-fact">Top zone: {topZone}</span>
                 <span className="summary-fact">
-                  Heatmap: {Number(result.hyperpigmentation?.coverage_percent ?? 0).toFixed(1)}% / {result.hyperpigmentation?.severity || "N/A"}
+                  Hyperpig: {Number(result.hyperpigmentation?.coverage_percent ?? 0).toFixed(1)}% / {result.hyperpigmentation?.severity || "N/A"}
                 </span>
               </div>
               <div className="summary-actions">
@@ -1030,15 +1060,10 @@ function TrackTab() {
   const [comparing, setComparing] = useState(false);
   const [compareResult, setCompareResult] = useState(null);
   const [compareError, setCompareError] = useState("");
+  const [cameraTarget, setCameraTarget] = useState(null); // 'before' | 'after' | null
 
-  const beforeUrl = useMemo(
-    () => (beforeFile ? URL.createObjectURL(beforeFile) : null),
-    [beforeFile],
-  );
-  const afterUrl = useMemo(
-    () => (afterFile ? URL.createObjectURL(afterFile) : null),
-    [afterFile],
-  );
+  const beforeUrl = useMemo(() => (beforeFile ? URL.createObjectURL(beforeFile) : null), [beforeFile]);
+  const afterUrl = useMemo(() => (afterFile ? URL.createObjectURL(afterFile) : null), [afterFile]);
 
   const onCompare = async () => {
     if (!beforeFile || !afterFile) {
@@ -1050,12 +1075,9 @@ function TrackTab() {
     setCompareResult(null);
     try {
       const fd = new FormData();
-      fd.append("baseline", beforeFile); // BEFORE = acne skin
-      fd.append("followup", afterFile); // AFTER  = clearer skin
-      const res = await fetch(`${API_BASE}/track`, {
-        method: "POST",
-        body: fd,
-      });
+      fd.append("baseline", beforeFile);
+      fd.append("followup", afterFile);
+      const res = await fetch(`${API_BASE}/track`, { method: "POST", body: fd });
       if (!res.ok) {
         const p = await res.json().catch(() => ({}));
         throw new Error(p.detail || `Server error ${res.status}`);
@@ -1068,106 +1090,76 @@ function TrackTab() {
     }
   };
 
+  const swapBeforeAfter = () => {
+    const prevBefore = beforeFile;
+    setBeforeFile(afterFile);
+    setAfterFile(prevBefore);
+    setCompareResult(null);
+    setCompareError("");
+  };
+
   const improvement = compareResult?.improvement_percent ?? 0;
   const improved = improvement > 0;
 
   return (
     <div className="tab-content">
+      <WebcamModal 
+        isOpen={!!cameraTarget} 
+        onClose={() => setCameraTarget(null)} 
+        onCapture={(f) => {
+          if (cameraTarget === "before") setBeforeFile(f);
+          if (cameraTarget === "after") setAfterFile(f);
+          setCameraTarget(null);
+        }}
+      />
+
       <div className="card track-card-full">
         <div className="card-header">
           <h2 className="card-title">Progress Tracking</h2>
           <p className="card-sub">
-            Upload a <strong>before</strong> photo (with acne) on the left and
-            an <strong>after</strong> photo (clearer skin) on the right to
-            measure your improvement
+            Compare <strong>before</strong> and <strong>after</strong> photos to measure improvement
           </p>
         </div>
 
-        {/* Before ──→ After upload row */}
         <div className="track-uploads">
-          {/* BEFORE */}
           <div className="track-upload-slot">
-            <p className="slot-label">
-              <span className="slot-num before-num">BEFORE</span>
-              Skin with Acne
-            </p>
+            <p className="slot-label"><span className="slot-num before-num">BEFORE</span> Skin with Acne</p>
             <MiniDrop
-              label="Upload Before Photo"
+              label="Before Photo"
               file={beforeFile}
               previewUrl={beforeUrl}
               onFile={setBeforeFile}
+              onCameraOpen={() => setCameraTarget("before")}
             />
-            {compareResult && (
-              <div className="slot-count">
-                <span className="slot-count-num bad">
-                  {compareResult.baseline_lesions}
-                </span>
-                <span className="slot-count-label">lesions</span>
-              </div>
-            )}
           </div>
 
-          {/* Arrow */}
           <div className="track-arrow">
             <svg viewBox="0 0 20 20" fill="currentColor">
-              <path
-                fillRule="evenodd"
-                d="M3 10a.75.75 0 0 1 .75-.75h10.638L10.23 5.29a.75.75 0 1 1 1.04-1.08l5.5 5.25a.75.75 0 0 1 0 1.08l-5.5 5.25a.75.75 0 1 1-1.04-1.08l4.158-3.96H3.75A.75.75 0 0 1 3 10Z"
-                clipRule="evenodd"
-              />
+              <path fillRule="evenodd" d="M3 10a.75.75 0 0 1 .75-.75h10.638L10.23 5.29a.75.75 0 1 1 1.04-1.08l5.5 5.25a.75.75 0 0 1 0 1.08l-5.5 5.25a.75.75 0 1 1-1.04-1.08l4.158-3.96H3.75A.75.75 0 0 1 3 10Z" clipRule="evenodd" />
             </svg>
             <span className="track-arrow-label">Progress</span>
           </div>
 
-          {/* AFTER */}
           <div className="track-upload-slot">
-            <p className="slot-label">
-              <span className="slot-num after-num">AFTER</span>
-              Clearer Skin
-            </p>
+            <p className="slot-label"><span className="slot-num after-num">AFTER</span> Clearer Skin</p>
             <MiniDrop
-              label="Upload After Photo"
+              label="After Photo"
               file={afterFile}
               previewUrl={afterUrl}
               onFile={setAfterFile}
+              onCameraOpen={() => setCameraTarget("after")}
             />
-            {compareResult && (
-              <div className="slot-count">
-                <span className={`slot-count-num ${improved ? "good" : "bad"}`}>
-                  {compareResult.followup_lesions}
-                </span>
-                <span className="slot-count-label">lesions</span>
-              </div>
-            )}
           </div>
         </div>
 
-        {compareError && (
-          <div className="alert alert-error">
-            <svg viewBox="0 0 20 20" fill="currentColor" className="alert-icon">
-              <path
-                fillRule="evenodd"
-                d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5A.75.75 0 0 1 10 5Zm0 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                clipRule="evenodd"
-              />
-            </svg>
-            {compareError}
-          </div>
-        )}
+        {compareError && <div className="alert alert-error">{compareError}</div>}
 
-        <button
-          className="btn-primary"
-          onClick={onCompare}
-          disabled={comparing || !beforeFile || !afterFile}
-        >
-          {comparing ? (
-            <>
-              <Spinner /> Comparing&hellip;
-            </>
-          ) : (
-            "Compare Progress"
-          )}
-        </button>
+        <div className="track-actions">
+          <button className="btn-secondary" onClick={swapBeforeAfter} disabled={comparing}>Swap</button>
+          <button className="btn-primary" onClick={onCompare} disabled={comparing || !beforeFile || !afterFile}>
+            {comparing ? <Spinner /> : "Compare Progress"}
+          </button>
+        </div>
 
         {compareResult && (
           <div className="compare-results">

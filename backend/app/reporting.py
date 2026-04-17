@@ -17,33 +17,48 @@ def _build_prompt(analysis: AnalysisResult) -> str:
         f"- {zone}: {count}" for zone, count in analysis.zone_counts.items()
     )
 
+    # Build acne type breakdown per zone
+    type_lines = ""
+    if analysis.acne_type_breakdown:
+        type_rows = []
+        for zone, types in analysis.acne_type_breakdown.items():
+            parts = [f"{v} {k.replace('_', '/')}" for k, v in types.items() if v > 0]
+            if parts:
+                type_rows.append(f"  - {zone}: {', '.join(parts)}")
+        type_lines = "\n".join(type_rows) or "  - No breakdown available"
+    else:
+        type_lines = "  - No breakdown available"
+
     return f"""
 You are an evidence-oriented skincare assistant.
 Provide a detailed, practical skin report using the metrics below.
 Do not claim a medical diagnosis. Use "possible" language and clear safety notes.
 
 Input metrics:
-- Acne severity: {analysis.acne_severity}
-- Acne score (0 to 1): {analysis.acne_score}
-- Lesion count: {len(analysis.lesions)}
+- GAGS Score: {analysis.gags_score} / 48
+- GAGS Severity: {analysis.gags_severity}
+- Acne score (0 to 1): {analysis.acne_score:.3f}
+- Total lesion count: {len(analysis.lesions)}
 - Hyperpigmentation coverage %: {analysis.hyperpigmentation.coverage_percent}
 - Hyperpigmentation severity: {analysis.hyperpigmentation.severity}
 - Lesion zone counts:
 {zone_lines}
+- Acne type breakdown by zone (comedone/papule/pustule/nodule_cyst):
+{type_lines}
 
 Output format requirements:
-1) Observed Skin Pattern (4-6 bullets)
-2) Possible Conditions (ranked, with confidence Low/Medium/High)
+1) Observed Skin Pattern (4-6 bullets, reference GAGS score and lesion types)
+2) Possible Conditions (ranked, with confidence Low/Medium/High — reference the lesion type mix)
 3) Possible Triggers (lifestyle, skincare, hormones, environment)
-4) Remedy Plan:
+4) Remedy Plan (tailored to the dominant lesion type):
    - Morning routine
    - Evening routine
    - Weekly routine
    - Habit changes
 5) Ingredient Guide:
-   - Helpful ingredients and why
+   - Helpful ingredients and why (prioritise for the detected acne type)
    - Ingredients to avoid right now
-6) When to Consult a Dermatologist (red flags)
+6) When to Consult a Dermatologist (red flags — especially if nodule/cyst count is high)
 7) Four-Week Tracking Checklist
 
 Keep it concise but detailed. Use plain language for a non-medical user.
@@ -55,10 +70,19 @@ def _fallback_report(analysis: AnalysisResult, reason: str) -> DetailedReportRes
     sorted_zones = sorted(analysis.zone_counts.items(), key=lambda kv: kv[1], reverse=True)
     top_zone = sorted_zones[0][0] if sorted_zones else "nose"
 
+    # Build type summary from breakdown
+    type_totals: dict[str, int] = {}
+    for zone_types in (analysis.acne_type_breakdown or {}).values():
+        for t, n in zone_types.items():
+            type_totals[t] = type_totals.get(t, 0) + n
+    type_summary = ", ".join(
+        f"{v} {k.replace('_', '/')}" for k, v in sorted(type_totals.items(), key=lambda kv: -kv[1]) if v > 0
+    ) or "no typed lesions"
+
     report = f"""
 1) Observed Skin Pattern
-- Acne severity appears {analysis.acne_severity} with an acne score of {analysis.acne_score:.2f}.
-- Approximate lesion count: {lesion_count}.
+- GAGS score: {analysis.gags_score}/48 — classified as {analysis.gags_severity}.
+- Approximate lesion count: {lesion_count} ({type_summary}).
 - Most affected area: {top_zone}.
 - Hyperpigmentation coverage is {analysis.hyperpigmentation.coverage_percent:.1f}% ({analysis.hyperpigmentation.severity}).
 
@@ -89,7 +113,7 @@ def _fallback_report(analysis: AnalysisResult, reason: str) -> DetailedReportRes
 
 7) Four-Week Tracking Checklist
 - Capture photos in same lighting weekly.
-- Track new lesion count and dark-mark intensity.
+- Track new lesion count, type mix (comedone/papule/pustule/nodule), and dark-mark intensity.
 - Track irritation signs (burning, peeling, redness duration).
 - Review trend at week 4 and adjust routine if needed.
 

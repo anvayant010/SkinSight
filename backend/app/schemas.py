@@ -9,6 +9,7 @@ class BoundingBox(BaseModel):
     label: str
     confidence: float
     zone: str
+    acne_type: str = "unknown"   # comedone | papule | pustule | nodule_cyst | unknown
 
 
 class HyperpigmentationReport(BaseModel):
@@ -19,8 +20,11 @@ class HyperpigmentationReport(BaseModel):
 class AnalysisResult(BaseModel):
     acne_severity: str
     acne_score: float
+    gags_score: int = 0
+    gags_severity: str = "Clear"
     lesions: list[BoundingBox]
     zone_counts: dict[str, int]
+    acne_type_breakdown: dict[str, dict[str, int]] = {}
     hyperpigmentation: HyperpigmentationReport
     summary: str
     annotated_image_base64: str

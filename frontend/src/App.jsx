@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { jsPDF } from "jspdf";
 import "./styles.css";
 
@@ -54,6 +54,29 @@ function UploadIcon() {
   );
 }
 
+function CameraIcon() {
+  return (
+    <svg
+      className="camera-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z"
+      />
+    </svg>
+  );
+}
+
 function CircularProgress({ percent, color }) {
   const r = 36;
   const circ = 2 * Math.PI * r;
@@ -98,7 +121,7 @@ function ZoneBar({ label, count, max }) {
 
 function DropZone({ file, previewUrl, onFile }) {
   const [dragging, setDragging] = useState(false);
-  const ref = { current: null };
+  const ref = useRef(null);
   return (
     <div
       className={`drop-zone ${dragging ? "drag-over" : ""} ${file ? "has-file" : ""}`}
@@ -150,8 +173,91 @@ function DropZone({ file, previewUrl, onFile }) {
   );
 }
 
+function CameraCapture({ onCapture, onError }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const [stream, setStream] = useState(null);
+  const [cameraError, setCameraError] = useState("");
+
+  useEffect(() => {
+    async function startCamera() {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                facingMode: "user",
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            } 
+        });
+        setStream(s);
+        if (videoRef.current) videoRef.current.srcObject = s;
+      } catch (err) {
+        console.error("Camera error:", err);
+        setCameraError("Unable to access camera. Please ensure permissions are granted.");
+        if (onError) onError(err);
+      }
+    }
+    startCamera();
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  const capture = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video && canvas) {
+      const context = canvas.getContext("2d");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      // Mirror if needed, matching the video scaleX(-1)
+      context.translate(canvas.width, 0);
+      context.scale(-1, 1);
+      
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+          onCapture(file);
+        }
+      }, "image/jpeg", 0.95);
+    }
+  };
+
+  if (cameraError) {
+      return (
+          <div className="camera-capture">
+              <div className="camera-error">
+                  <CameraIcon />
+                  <p>{cameraError}</p>
+              </div>
+          </div>
+      );
+  }
+
+  return (
+    <div className="camera-capture">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className="camera-video"
+      />
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+      <div className="camera-overlay">
+        <button type="button" className="capture-btn" onClick={capture} title="Capture Photo">
+          <div className="capture-inner" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function MiniDrop({ label, file, previewUrl, onFile }) {
-  const ref = { current: null };
+  const ref = useRef(null);
   const [dragging, setDragging] = useState(false);
   return (
     <div
@@ -333,6 +439,7 @@ function AnalyzeTab({ forcedView = "annotated" }) {
   const [showResults, setShowResults] = useState(false);
   const [heatmapOpen, setHeatmapOpen] = useState(false);
   const [heatmapZoom, setHeatmapZoom] = useState(1);
+  const [sourceMode, setSourceMode] = useState("upload"); // "upload" or "camera"
 
   const previewUrl = useMemo(
     () => (file ? URL.createObjectURL(file) : null),
@@ -564,13 +671,37 @@ function AnalyzeTab({ forcedView = "annotated" }) {
       <div className="analyze-top-row">
         <section className="card upload-card">
           <div className="card-header">
-            <h2 className="card-title">Upload Your Photo</h2>
+            <h2 className="card-title">Add Your Photo</h2>
             <p className="card-sub">
               Well-lit, front-facing selfie for best results
             </p>
           </div>
+          
+          <div className="upload-methods">
+            <button 
+              type="button" 
+              className={`method-btn ${sourceMode === "upload" ? "active" : ""}`}
+              onClick={() => setSourceMode("upload")}
+            >
+              <UploadIcon />
+              <span>File Upload</span>
+            </button>
+            <button 
+              type="button" 
+              className={`method-btn ${sourceMode === "camera" ? "active" : ""}`}
+              onClick={() => setSourceMode("camera")}
+            >
+              <CameraIcon />
+              <span>Take Photo</span>
+            </button>
+          </div>
+
           <form onSubmit={onAnalyze}>
-            <DropZone file={file} previewUrl={previewUrl} onFile={setFile} />
+            {sourceMode === "upload" ? (
+              <DropZone file={file} previewUrl={previewUrl} onFile={setFile} />
+            ) : (
+              <CameraCapture onCapture={(f) => { setFile(f); setSourceMode("upload"); }} />
+            )}
             {error && (
               <div className="alert alert-error" role="alert">
                 <svg

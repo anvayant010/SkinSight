@@ -2,8 +2,27 @@
 
 **Upload a selfie → Get a full dermatological-grade visual skin report in under 5 seconds.**
 
-SkinSight AI is an intelligent web application that analyzes facial skin conditions using computer vision and AI, delivering instant, visual, and actionable insights - making professional-level skin analysis accessible to everyone.
+SkinSight AI is an intelligent web application that analyzes facial skin conditions using computer vision and AI, delivering instant, visual, and actionable insights - making professional-level skin screening accessible to everyone.
 
+---
+
+## **Quick Start Guide**
+
+Follow these steps to run the project locally:
+
+### 1. Backend Setup
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+### 2. Frontend Setup
+```bash
+cd frontend
+bun install
+bun run dev
+```
 
 ---
 
@@ -38,6 +57,13 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 
 ---
 
+## **New Features**
+- **History Tracking**: Keep a record of your skin analysis results.
+- **Marketplace**: Browse recommended products based on your skin report.
+> These features are currently available on the **`feat1`** branch.
+
+---
+
 ## **Unique Selling Points (USPs)**
 
 - **Visual-first interface** - All findings overlaid directly on the user's photo
@@ -54,36 +80,32 @@ SkinSight AI is an intelligent web application that analyzes facial skin conditi
 | --------------------- | ------------------------------------------------ |
 | **Frontend**          | React.js + TailwindCSS                           |
 | **Backend**           | FastAPI (Python)                                 |
-| **CV Models**         | YOLOv8 (lesion detection), MediaPipe (face mesh) |
+| **CV Models**         | YOLOv8/v11 (lesion detection), MediaPipe (face mesh) |
 | **Segmentation**      | SAM (Segment Anything) / DeepLabv3               |
 | **Hyperpigmentation** | OpenCV HSV + Custom Skin Tone Calibration        |
 | **LLM Layer**         | Claude (Anthropic) API                           |
 | **Deployment**        | Docker + Render / Hugging Face Spaces            |
 
+---
+
 ## Core Logic & AI Models
 
-The system employs two distinct computer vision models to perform a granular analysis:
+The system employs advanced computer vision models for granular analysis:
 
-### 1. Facial Region Model (`facial-region-detection-dt8b3`)
+### 1. YOLO Models Integration
+SkinSight AI utilizes three specialized YOLO models:
+- **`yolo11s-seg.pt`**: Primarily used for high-precision lesion segmentation to identify the exact boundaries of skin issues.
+- **`yolov8s-cls.pt`**: Employed for acne severity classification, grading the overall condition into clinical levels (Clear, Mild, Moderate, Severe).
+- **`yolov8m.pt`**: Serves as a robust object detection backbone for identifying various skin markers.
 
-- Identifies specific parts of the face:
-  - Forehead  
-  - Nose  
-  - Chin  
-  - Cheeks  
-- Enables mapping of detected acne to specific clinical regions, which is essential for accurate scoring.
+### 2. Roboflow & Acne Vulgaris Model
+We leverage **Roboflow** for dataset management and model hosting. The **acne-vulgaris** model, trained on thousands of dermatological images, is used to detect and classify individual lesions (Comedones, Papules, Pustules, Nodules). This model is integrated into our pipeline to provide medical-grade detection accuracy.
 
-### 2. Acne Detection Model (`acne-vulgaris`)
+### 3. Facial Region Detection
+- **MediaPipe / Facial-region-detection**: Identifies specific parts of the face (Forehead, Nose, Chin, Cheeks) to map detected lesions to clinical regions for accurate scoring.
 
-- Detects and classifies individual acne lesions into four categories:
-  - **Comedones** (Blackheads / Whiteheads)
-  - **Papules**
-  - **Pustules**
-  - **Nodules**
-  - 
 **Pipeline Flow:**
-
-`Image Upload → Preprocessing → Face Mesh → Zone Segmentation → Lesion Detection → Hyperpigmentation Analysis → Severity Scoring → Visual Overlays → LLM Summary`
+`Image Upload → Preprocessing → Face Mesh → Zone Segmentation → Lesion Detection (YOLO/Roboflow) → Hyperpigmentation Analysis → Severity Scoring → Visual Overlays → LLM Summary`
 
 ---
 
@@ -100,7 +122,7 @@ flowchart TD
 
     C --> D[Facial Zone Segmentation<br/>Forehead • Cheeks • Nose • Chin+Jawline]
 
-    D --> E[YOLOv8 Lesion Detection<br/>Bounding Boxes + Classification]
+    D --> E[YOLO/Roboflow Lesion Detection<br/>Bounding Boxes + Classification]
     D --> F[Hyperpigmentation Analysis<br/>OpenCV HSV + Skin Tone Calibration]
 
     E & F --> G[Severity Scoring Engine<br/>Rule-based + ML Classifier]

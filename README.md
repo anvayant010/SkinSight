@@ -90,6 +90,29 @@ bun run dev
 
 ## Core Logic & AI Models
 
+The system employs two distinct computer vision models to perform a granular analysis:
+
+### Facial Region Model (`facial-region-detection-dt8b3`)
+
+- Identifies specific parts of the face:
+  - Forehead  
+  - Nose  
+  - Chin  
+  - Cheeks  
+- Enables mapping of detected acne to specific clinical regions, which is essential for accurate scoring.
+
+### Acne Detection Model (`acne-vulgaris`)
+
+- Detects and classifies individual acne lesions into four categories:
+  - **Comedones** (Blackheads / Whiteheads)
+  - **Papules**
+  - **Pustules**
+  - **Nodules**
+  - 
+**Pipeline Flow:**
+
+`Image Upload → Preprocessing → Face Mesh → Zone Segmentation → Lesion Detection → 
+
 The system employs advanced computer vision models for granular analysis:
 
 ### 1. YOLO Models Integration
